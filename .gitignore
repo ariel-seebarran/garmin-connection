@@ -1,0 +1,15 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+backend/garmin.db
+backend/*.db
+*.db
+node_modules/
+.DS_Store
+
+logs/
+chroma_db/
+backend/.garmin_tokens
