@@ -207,11 +207,13 @@ async def compare_training_periods(
 @tool
 async def get_recovery_status() -> str:
     """
-    Assess current recovery readiness using sleep, HRV, resting HR, and body battery.
+    Assess current recovery readiness using sleep, HRV, resting HR, body battery,
+    SpO2, respiration rate, and training readiness score.
     Always call this before recommending training intensity or building a plan.
     """
     sleep = await database.get_recent_sleep(days=7)
     daily = await database.get_recent_daily_stats(days=7)
+    training_metrics = await database.get_recent_training_metrics(days=7)
 
     if not sleep and not daily:
         return "No recovery data available. Sync wellness data first."
@@ -241,14 +243,80 @@ async def get_recovery_status() -> str:
         lines.append("\nWellness:")
         for d in daily[:5]:
             bb = f"body battery {d['body_battery_low'] or '?'}-{d['body_battery_high'] or '?'}" if d["body_battery_low"] else ""
+            spo2_str = f", SpO2 {d['avg_spo2']:.0f}%" if d.get("avg_spo2") else ""
+            resp_str = f", resp {d['avg_respiration_rate']:.1f}br/min" if d.get("avg_respiration_rate") else ""
+            floors_str = f", {d['floors_climbed']} floors" if d.get("floors_climbed") else ""
+            steps_str = f", {d['steps']:,} steps" if d.get("steps") else ""
             lines.append(
                 f"  {d['date']}: RHR {d['resting_heart_rate'] or 'N/A'}bpm, "
                 f"stress {d['avg_stress_level'] or 'N/A'}, {bb}"
+                f"{spo2_str}{resp_str}{steps_str}{floors_str}"
             )
         rhrs = [d["resting_heart_rate"] for d in daily if d["resting_heart_rate"]]
         if rhrs:
             trend = "↑ elevated (possible fatigue)" if len(rhrs) >= 2 and rhrs[0] > rhrs[-1] + 3 else "→ stable"
             lines.append(f"  → RHR trend: {round(sum(rhrs)/len(rhrs))}bpm avg, {trend}")
+
+    if training_metrics:
+        latest_tr = next((m for m in training_metrics if m.get("training_readiness_score")), None)
+        if latest_tr:
+            lines.append(
+                f"\nTraining Readiness: {latest_tr['training_readiness_score']}/100 "
+                f"({latest_tr.get('training_readiness_level', '')}) as of {latest_tr['date']}"
+            )
+
+    return "\n".join(lines)
+
+
+@tool
+async def get_performance_metrics() -> str:
+    """
+    Get VO2 max, predicted race times, and training readiness trend.
+    Use for questions about fitness level, race potential, or long-term performance changes.
+    """
+    metrics = await database.get_recent_training_metrics(days=60)
+    if not metrics:
+        return "No performance metrics found. Sync data to fetch VO2 max, race predictions, and training readiness."
+
+    latest = metrics[0]
+    lines = ["Performance Metrics:\n"]
+
+    if latest.get("vo2_max"):
+        lines.append(f"VO2 Max: {latest['vo2_max']:.1f} ml/kg/min (as of {latest['date']})")
+
+    if latest.get("training_readiness_score"):
+        lines.append(
+            f"Training Readiness: {latest['training_readiness_score']}/100 "
+            f"({latest.get('training_readiness_level', '')})"
+        )
+
+    race_data = [
+        ("5K", latest.get("race_5k_seconds")),
+        ("10K", latest.get("race_10k_seconds")),
+        ("Half Marathon", latest.get("race_half_seconds")),
+        ("Marathon", latest.get("race_marathon_seconds")),
+    ]
+    race_lines = []
+    for label, sec in race_data:
+        if sec:
+            h, rem = divmod(int(sec), 3600)
+            m, s = divmod(rem, 60)
+            t = f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+            race_lines.append(f"  {label}: {t}")
+    if race_lines:
+        lines.append("\nPredicted Race Times:")
+        lines.extend(race_lines)
+
+    vo2_entries = [(m["date"], m["vo2_max"]) for m in metrics if m.get("vo2_max")]
+    if len(vo2_entries) >= 2:
+        delta = vo2_entries[0][1] - vo2_entries[-1][1]
+        trend = f"↑ +{delta:.1f}" if delta > 0.5 else f"↓ {delta:.1f}" if delta < -0.5 else "→ stable"
+        lines.append(f"\nVO2 Max trend ({len(vo2_entries)} readings): {trend}")
+
+    tr_entries = [(m["date"], m["training_readiness_score"]) for m in metrics[:14] if m.get("training_readiness_score")]
+    if tr_entries:
+        avg_tr = round(sum(v for _, v in tr_entries) / len(tr_entries))
+        lines.append(f"Training Readiness 14-day avg: {avg_tr}/100")
 
     return "\n".join(lines)
 
@@ -295,18 +363,20 @@ async def get_weekly_volume_trend(weeks: int = 12) -> str:
 # Agent factory
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """You are an expert personal running coach and sports scientist with access to the athlete's complete Garmin training history.
+SYSTEM_PROMPT = """You are an expert personal running coach and sports scientist with access to the athlete's complete Garmin training history, including activities, sleep, HRV, SpO2, respiration, body battery, VO2 max, training readiness, and predicted race times.
 
 Your approach:
 - Always ground advice in the athlete's actual data — call tools before answering
 - For plans: check recovery status AND recent volume, then build from real numbers
 - For history questions: use search_training_history for semantic lookups, get_recent_training for structured recent data
+- For fitness/race questions: use get_performance_metrics for VO2 max and race predictions
 - Be specific: reference actual dates, paces, distances from the data
-- Flag warning signs (rising RHR, falling HRV, abrupt volume spikes)
+- Flag warning signs (rising RHR, falling HRV, low SpO2, abrupt volume spikes, low training readiness)
 - Keep plans realistic based on current training load, not aspirational
 
 When building training plans:
 - Establish current weekly volume from weekly_volume_trend
+- Check training readiness and recovery before prescribing intensity
 - Apply max 10% volume increase per week unless data shows higher tolerance
 - Include easy days (HR < 140) and one quality session per week
 - Explicitly note what to skip or reduce if recovery scores are low"""
@@ -321,6 +391,7 @@ def build_agent():
         compare_training_periods,
         get_recovery_status,
         get_weekly_volume_trend,
+        get_performance_metrics,
     ]
     return create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
 
@@ -387,7 +458,8 @@ def _tool_label(name: str, query: str) -> str:
         "get_recent_training": f"Fetching last {query} days of training..." if query else "Fetching recent training...",
         "get_personal_records": "Looking up personal records...",
         "compare_training_periods": "Comparing training periods...",
-        "get_recovery_status": "Checking recovery status...",
+        "get_recovery_status": "Checking recovery & biometrics...",
         "get_weekly_volume_trend": "Analyzing weekly volume trends...",
+        "get_performance_metrics": "Fetching VO2 max & race predictions...",
     }
     return labels.get(name, f"Running {name}...")

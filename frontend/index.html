@@ -15,42 +15,77 @@
           <span class="logo-icon">&#9889;</span>
           <span class="logo-text">Coach Claude</span>
         </div>
-        <button id="syncBtn" class="btn btn-primary" onclick="openSyncModal()">Sync Garmin</button>
+        <div class="sidebar-btn-row">
+          <button id="syncBtn" class="btn btn-primary" onclick="openSyncModal()">Sync Garmin</button>
+          <button class="btn btn-secondary perf-btn" onclick="openPerfModal()" title="Race predictions & VO2 max">🏅 Performance</button>
+        </div>
         <div id="lastSync" class="last-sync"></div>
       </div>
 
       <div class="stats-grid">
-        <div class="stat-card">
+        <div class="stat-card clickable" data-card="weekly_distance" draggable="true" onclick="openChart('weekly_distance','Weekly Distance',90)">
+          <span class="card-drag-handle">⠿</span>
           <div class="stat-label">This Week</div>
           <div class="stat-value" id="weeklyDist">—</div>
           <div class="stat-sub">km</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card clickable" data-card="daily_distance" draggable="true" onclick="openChart('daily_distance','Daily Distance',30)">
+          <span class="card-drag-handle">⠿</span>
           <div class="stat-label">30-Day Total</div>
           <div class="stat-value" id="totalDist">—</div>
           <div class="stat-sub">km</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card clickable" data-card="sleep_score" draggable="true" onclick="openChart('sleep_score','Sleep Score',30)">
+          <span class="card-drag-handle">⠿</span>
           <div class="stat-label">Sleep Score</div>
           <div class="stat-value" id="sleepScore">—</div>
           <div class="stat-sub">7-day avg</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card clickable" data-card="hrv" draggable="true" onclick="openChart('hrv','HRV',30)">
+          <span class="card-drag-handle">⠿</span>
           <div class="stat-label">HRV</div>
           <div class="stat-value" id="hrv">—</div>
           <div class="stat-sub">ms avg</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card clickable" data-card="resting_hr" draggable="true" onclick="openChart('resting_hr','Resting Heart Rate',30)">
+          <span class="card-drag-handle">⠿</span>
           <div class="stat-label">Resting HR</div>
           <div class="stat-value" id="rhr">—</div>
           <div class="stat-sub">bpm avg</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card clickable" data-card="pace" draggable="true" onclick="openChart('pace','Run Pace',90)">
+          <span class="card-drag-handle">⠿</span>
           <div class="stat-label">Last Run</div>
           <div class="stat-value" id="lastPace">—</div>
           <div class="stat-sub" id="lastRunDate"></div>
         </div>
+        <div class="stat-card clickable" data-card="training_readiness" draggable="true" onclick="openChart('training_readiness','Training Readiness',30)">
+          <span class="card-drag-handle">⠿</span>
+          <div class="stat-label">Readiness</div>
+          <div class="stat-value" id="trainingReadiness">—</div>
+          <div class="stat-sub" id="trainingReadinessLevel">/100</div>
+        </div>
+        <div class="stat-card clickable" data-card="vo2_max" draggable="true" onclick="openChart('vo2_max','VO2 Max',365)">
+          <span class="card-drag-handle">⠿</span>
+          <div class="stat-label">VO2 Max</div>
+          <div class="stat-value" id="vo2Max">—</div>
+          <div class="stat-sub">ml/kg/min</div>
+        </div>
+        <div class="stat-card clickable" data-card="steps" draggable="true" onclick="openChart('steps','Daily Steps',30)">
+          <span class="card-drag-handle">⠿</span>
+          <div class="stat-label">Steps Today</div>
+          <div class="stat-value" id="stepsToday">—</div>
+          <div class="stat-sub">steps</div>
+        </div>
+        <div class="stat-card clickable" data-card="intensity_minutes" draggable="true" onclick="openChart('intensity_minutes','Intensity Minutes',30)">
+          <span class="card-drag-handle">⠿</span>
+          <div class="stat-label">Intensity Mins</div>
+          <div class="stat-value" id="intensityMins">—</div>
+          <div class="stat-sub">this week</div>
+        </div>
       </div>
+
+      <div class="sidebar-divider" title="Drag to resize"></div>
 
       <div class="activity-feed">
         <div class="section-title">Recent Runs</div>
@@ -67,12 +102,6 @@
           <div class="chat-title">Coach Claude</div>
           <button class="new-chat-btn" onclick="newChat()">+ New chat</button>
         </div>
-        <input
-          id="goalInput"
-          type="text"
-          class="goal-input"
-          placeholder="Your goal — e.g. sub-4h marathon in 12 weeks"
-        />
       </div>
 
       <div class="chat-messages" id="chatMessages">
@@ -153,6 +182,9 @@
         <button class="btn btn-primary" onclick="startSync()" id="syncConfirmBtn">Sync Now</button>
       </div>
       <div id="syncStatus" class="sync-status"></div>
+
+      <div class="strava-divider"><span>or sync from Strava</span></div>
+      <div id="stravaSection"></div>
     </div>
   </div>
 
@@ -175,6 +207,98 @@
     </div>
   </template>
 
+  <!-- Performance Modal -->
+  <div id="perfModal" class="modal-overlay" onclick="closePerfModal(event)">
+    <div class="modal perf-modal">
+      <div class="perf-modal-header">
+        <h2>Performance</h2>
+        <button class="chart-close-btn" onclick="closePerfModal()">×</button>
+      </div>
+
+      <div class="perf-section">
+        <div class="perf-section-title">VO2 Max</div>
+        <div class="perf-vo2-row">
+          <span class="perf-vo2-value" id="perfVo2">—</span>
+          <span class="perf-vo2-unit">ml/kg/min</span>
+          <span class="perf-vo2-date" id="perfVo2Date"></span>
+        </div>
+      </div>
+
+      <div class="perf-section">
+        <div class="perf-section-title">Race Predictions</div>
+        <div id="perfRaceDate" class="perf-race-date"></div>
+        <div class="perf-race-grid">
+          <div class="perf-race-card">
+            <div class="perf-race-dist">5K</div>
+            <div class="perf-race-time" id="perf5k">—</div>
+          </div>
+          <div class="perf-race-card">
+            <div class="perf-race-dist">10K</div>
+            <div class="perf-race-time" id="perf10k">—</div>
+          </div>
+          <div class="perf-race-card">
+            <div class="perf-race-dist">Half</div>
+            <div class="perf-race-time" id="perfHalf">—</div>
+          </div>
+          <div class="perf-race-card">
+            <div class="perf-race-dist">Marathon</div>
+            <div class="perf-race-time" id="perfMarathon">—</div>
+          </div>
+        </div>
+        <div id="perfNoRace" class="perf-no-data" style="display:none">
+          No race predictions yet — sync your Garmin data to populate these.
+        </div>
+      </div>
+
+      <div class="perf-section">
+        <div class="perf-section-title">Training Readiness (last 30 days)</div>
+        <div id="perfReadinessChart" class="perf-readiness-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Activity Detail Modal -->
+  <div id="activityModal" class="modal-overlay" onclick="closeActivityModal(event)">
+    <div class="modal activity-modal">
+      <div class="activity-modal-header">
+        <div>
+          <div class="activity-type-badge" id="actDetailBadge"></div>
+          <div class="activity-modal-name" id="actDetailName"></div>
+          <div class="activity-modal-date" id="actDetailDate"></div>
+        </div>
+        <button class="chart-close-btn" onclick="closeActivityModal()">×</button>
+      </div>
+      <div class="activity-detail-grid" id="actDetailGrid">
+        <div style="color:var(--text-muted);padding:20px;text-align:center;grid-column:1/-1">Loading…</div>
+      </div>
+      <div class="activity-modal-actions">
+        <button class="btn btn-secondary" onclick="closeActivityModal()">Close</button>
+        <button class="btn btn-primary" onclick="askAboutCurrentActivity()">Ask Coach Claude</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chart Modal -->
+  <div id="chartModal" class="chart-modal-overlay" onclick="closeChart(event)">
+    <div class="chart-modal">
+      <div class="chart-modal-header">
+        <div class="chart-modal-title" id="chartModalTitle"></div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div class="chart-period-selector">
+            <button class="period-btn" data-days="30" onclick="setChartPeriod(30)">30d</button>
+            <button class="period-btn" data-days="90" onclick="setChartPeriod(90)">90d</button>
+            <button class="period-btn" data-days="365" onclick="setChartPeriod(365)">1yr</button>
+          </div>
+          <button class="chart-close-btn" onclick="closeChart()">×</button>
+        </div>
+      </div>
+      <div class="chart-stats-bar" id="chartStatsBar"></div>
+      <div class="chart-container">
+        <canvas id="chartCanvas"></canvas>
+      </div>
+    </div>
+  </div>
+
   <script>
     // Toggle days input visibility based on full history checkbox
     document.addEventListener("DOMContentLoaded", () => {
@@ -183,6 +307,7 @@
       cb.addEventListener("change", () => { dg.style.display = cb.checked ? "none" : ""; });
     });
   </script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

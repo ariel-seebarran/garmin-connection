@@ -83,12 +83,18 @@ def _activity_to_text(a: dict) -> str:
     elev = a.get("elevation_gain") or 0
     elev_desc = f", {elev:.0f}m elevation gain" if elev > 10 else ""
 
+    power = a.get("avg_power")
+    power_desc = f", {power}W avg power" if power else ""
+
+    tss = a.get("training_stress_score")
+    tss_desc = f", TSS {tss:.0f}" if tss else ""
+
     return (
         f"{dist_km:.1f}km {effort} {a.get('activity_type', 'run')} on {date_desc}. "
         f"Pace: {_fmt_pace(a.get('avg_pace_per_km'))}, "
         f"heart rate: {hr or 'N/A'} bpm avg, "
         f"duration: {_fmt_duration(a.get('duration_seconds'))}"
-        f"{elev_desc}{te_desc}."
+        f"{elev_desc}{te_desc}{power_desc}{tss_desc}."
     )
 
 

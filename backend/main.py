@@ -5,18 +5,20 @@ from pathlib import Path
 # Ensure backend/ is on sys.path regardless of how the server is invoked
 sys.path.insert(0, str(Path(__file__).parent))
 
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import database
 import garmin_client
+import strava_client
 import vector_store
 import agent
 from logging_config import setup_logging, get_logger
@@ -122,6 +124,13 @@ async def reindex():
     return {"indexed": indexed}
 
 
+@app.post("/api/backfill-vo2")
+async def backfill_vo2():
+    """Populate VO2 max in training_metrics from vO2MaxValue stored in activity records."""
+    count = await database.sync_vo2_from_activities()
+    return {"vo2_dates_populated": count}
+
+
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
     if not os.getenv("GOOGLE_API_KEY"):
@@ -144,6 +153,7 @@ async def get_stats():
     daily = await database.get_recent_daily_stats(7)
     last_sync = await database.get_last_sync()
     indexed = await vector_store.get_indexed_count()
+    training_metrics = await database.get_recent_training_metrics(days=30)
 
     total_distance = sum(a["distance_meters"] or 0 for a in activities) / 1000
     cutoff = (date.today() - timedelta(days=7)).isoformat()
@@ -167,6 +177,23 @@ async def get_stats():
         p = latest["avg_pace_per_km"]
         pace_str = f"{int(p)}:{int((p % 1) * 60):02d}/km"
 
+    latest_tr = next((m for m in training_metrics if m.get("training_readiness_score")), None)
+    latest_vo2 = next((m for m in training_metrics if m.get("vo2_max")), None)
+
+    # Steps: use today's value if available, otherwise fall back to most recent day with data
+    steps_today = None
+    steps_date = None
+    today_str = date.today().isoformat()
+    for d in daily:
+        if d.get("steps") is not None:
+            steps_today = d["steps"]
+            steps_date = d["date"] if d["date"] != today_str else None
+            break
+
+    intensity_mod = sum(d.get("intensity_minutes_moderate") or 0 for d in daily)
+    intensity_vig = sum(d.get("intensity_minutes_vigorous") or 0 for d in daily)
+    intensity_total = intensity_mod + intensity_vig if (intensity_mod + intensity_vig) > 0 else None
+
     return {
         "total_distance_30d": round(total_distance, 1),
         "weekly_distance": round(weekly_distance, 1),
@@ -179,7 +206,21 @@ async def get_stats():
         "last_run_distance": round((latest["distance_meters"] or 0) / 1000, 2) if latest else None,
         "last_sync": last_sync["sync_time"][:19].replace("T", " ") if last_sync else None,
         "total_indexed": indexed,
+        "training_readiness": latest_tr.get("training_readiness_score") if latest_tr else None,
+        "training_readiness_level": latest_tr.get("training_readiness_level") if latest_tr else None,
+        "vo2_max": latest_vo2.get("vo2_max") if latest_vo2 else None,
+        "steps_today": steps_today,
+        "steps_date": steps_date,
+        "intensity_minutes_week": intensity_total,
     }
+
+
+@app.get("/api/activities/{activity_id}")
+async def activity_detail(activity_id: str):
+    activity = await database.get_activity_detail(activity_id)
+    if not activity:
+        raise HTTPException(404, "Activity not found")
+    return activity
 
 
 @app.get("/api/activities")
@@ -203,8 +244,192 @@ async def get_activities(limit: int = 20):
             "duration": dur_str,
             "elevation_gain": a["elevation_gain"],
             "calories": a["calories"],
+            "power": a.get("avg_power"),
+            "tss": round(a["training_stress_score"]) if a.get("training_stress_score") else None,
         })
     return {"activities": out}
+
+
+@app.get("/api/chart-data")
+async def get_chart_data(metric: str, days: int = 30):
+    if metric == "sleep_score":
+        rows = await database.get_recent_sleep(days=days)
+        data = [{"date": r["date"], "value": r["sleep_score"]}
+                for r in reversed(rows) if r["sleep_score"] is not None]
+        return {"data": data, "unit": "/100", "title": "Sleep Score"}
+
+    elif metric == "hrv":
+        rows = await database.get_recent_sleep(days=days)
+        data = [{"date": r["date"], "value": round(r["avg_hrv"], 1)}
+                for r in reversed(rows) if r["avg_hrv"] is not None]
+        return {"data": data, "unit": "ms", "title": "HRV"}
+
+    elif metric == "resting_hr":
+        rows = await database.get_recent_daily_stats(days=days)
+        data = [{"date": r["date"], "value": r["resting_heart_rate"]}
+                for r in reversed(rows) if r["resting_heart_rate"] is not None]
+        return {"data": data, "unit": "bpm", "title": "Resting Heart Rate", "lower_is_better": True}
+
+    elif metric == "steps":
+        rows = await database.get_recent_daily_stats(days=days)
+        data = [{"date": r["date"], "value": r["steps"]}
+                for r in reversed(rows) if r.get("steps")]
+        return {"data": data, "unit": "steps", "title": "Daily Steps"}
+
+    elif metric == "intensity_minutes":
+        rows = await database.get_recent_daily_stats(days=days)
+        data = []
+        for r in reversed(rows):
+            v = (r.get("intensity_minutes_moderate") or 0) + (r.get("intensity_minutes_vigorous") or 0)
+            if v > 0:
+                data.append({"date": r["date"], "value": v})
+        return {"data": data, "unit": "min", "title": "Intensity Minutes"}
+
+    elif metric == "training_readiness":
+        rows = await database.get_recent_training_metrics(days=days)
+        data = [{"date": r["date"], "value": r["training_readiness_score"]}
+                for r in reversed(rows) if r["training_readiness_score"] is not None]
+        return {"data": data, "unit": "/100", "title": "Training Readiness"}
+
+    elif metric == "vo2_max":
+        rows = await database.get_recent_training_metrics(days=days)
+        data = [{"date": r["date"], "value": round(r["vo2_max"], 1)}
+                for r in reversed(rows) if r["vo2_max"] is not None]
+        return {"data": data, "unit": "ml/kg/min", "title": "VO2 Max"}
+
+    elif metric == "daily_distance":
+        rows = await database.get_recent_activities(limit=max(days * 3, 500))
+        cutoff = (date.today() - timedelta(days=days)).isoformat()
+        daily: dict[str, float] = defaultdict(float)
+        for a in rows:
+            d = (a.get("start_time") or "")[:10]
+            if d >= cutoff:
+                daily[d] += (a.get("distance_meters") or 0) / 1000
+        data = [{"date": d, "value": round(v, 2)} for d, v in sorted(daily.items())]
+        return {"data": data, "unit": "km", "title": "Daily Distance"}
+
+    elif metric == "weekly_distance":
+        rows = await database.get_recent_activities(limit=9999)
+        today = date.today()
+        weekly: dict[str, float] = {}
+        for i in range(min(days // 7 + 1, 104)):
+            week_start = today - timedelta(days=today.weekday() + 7 * i)
+            weekly[week_start.isoformat()] = 0.0
+        for a in rows:
+            d_str = (a.get("start_time") or "")[:10]
+            if not d_str:
+                continue
+            try:
+                d_obj = date.fromisoformat(d_str)
+                key = (d_obj - timedelta(days=d_obj.weekday())).isoformat()
+                if key in weekly:
+                    weekly[key] += (a.get("distance_meters") or 0) / 1000
+            except Exception:
+                pass
+        data = [{"date": d, "value": round(v, 1)} for d, v in sorted(weekly.items())]
+        return {"data": data, "unit": "km", "title": "Weekly Distance"}
+
+    elif metric == "pace":
+        rows = await database.get_recent_activities(limit=500)
+        cutoff = (date.today() - timedelta(days=days)).isoformat()
+        data = [
+            {"date": (a.get("start_time") or "")[:10], "value": round(a["avg_pace_per_km"], 2)}
+            for a in reversed(rows)
+            if a.get("avg_pace_per_km") and (a.get("start_time") or "")[:10] >= cutoff
+        ]
+        return {"data": data, "unit": "min/km", "title": "Run Pace", "lower_is_better": True}
+
+    else:
+        raise HTTPException(400, f"Unknown metric: {metric}")
+
+
+@app.get("/api/performance")
+async def get_performance():
+    data = await database.get_performance_data()
+
+    def fmt_time(secs):
+        if not secs:
+            return None
+        h, rem = divmod(int(secs), 3600)
+        m, s = divmod(rem, 60)
+        return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+    races = data["race_predictions"]
+    return {
+        "vo2_max": data["vo2_max"],
+        "race_predictions": {
+            "date": races["date"] if races else None,
+            "5k": fmt_time(races["race_5k_seconds"] if races else None),
+            "10k": fmt_time(races["race_10k_seconds"] if races else None),
+            "half": fmt_time(races["race_half_seconds"] if races else None),
+            "marathon": fmt_time(races["race_marathon_seconds"] if races else None),
+        } if races else None,
+        "readiness_history": data["readiness_history"],
+    }
+
+
+@app.get("/api/strava/status")
+async def strava_status():
+    tokens = await database.get_strava_tokens()
+    if not tokens:
+        return {"connected": False}
+    return {"connected": True, "athlete_name": tokens.get("athlete_name"), "athlete_id": tokens.get("athlete_id")}
+
+
+@app.get("/api/strava/auth")
+async def strava_auth():
+    client_id = os.getenv("STRAVA_CLIENT_ID")
+    if not client_id:
+        raise HTTPException(400, "STRAVA_CLIENT_ID not set in .env")
+    redirect_uri = os.getenv("STRAVA_REDIRECT_URI", "http://localhost:8000/api/strava/callback")
+    return RedirectResponse(strava_client.get_auth_url(client_id, redirect_uri))
+
+
+@app.get("/api/strava/callback")
+async def strava_callback(code: str | None = None, error: str | None = None):
+    if error or not code:
+        log.warning("Strava OAuth error: %s", error)
+        return RedirectResponse("/?strava_error=1")
+
+    client_id = os.getenv("STRAVA_CLIENT_ID")
+    client_secret = os.getenv("STRAVA_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        return RedirectResponse("/?strava_error=missing_creds")
+
+    try:
+        data = await strava_client.exchange_code(client_id, client_secret, code)
+        athlete = data.get("athlete", {})
+        await database.save_strava_tokens(
+            data["access_token"], data["refresh_token"], data["expires_at"],
+            athlete.get("id"),
+            f"{athlete.get('firstname', '')} {athlete.get('lastname', '')}".strip() or None,
+        )
+        log.info("Strava connected: athlete_id=%s", athlete.get("id"))
+    except Exception as e:
+        log.error("Strava OAuth token exchange failed: %s", e)
+        return RedirectResponse("/?strava_error=1")
+
+    return RedirectResponse("/?strava_connected=1")
+
+
+@app.post("/api/strava/sync")
+async def strava_sync(days: int = 30):
+    client_id = os.getenv("STRAVA_CLIENT_ID")
+    client_secret = os.getenv("STRAVA_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        raise HTTPException(400, "STRAVA_CLIENT_ID / STRAVA_CLIENT_SECRET not set in .env")
+
+    try:
+        results = await strava_client.sync_activities(client_id, client_secret, days)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        log.error("Strava sync error: %s", e)
+        raise HTTPException(500, str(e))
+
+    indexed = await vector_store.index_all_activities()
+    log.info("Strava sync complete: %d activities indexed: %d", results["activities"], indexed)
+    return {**results, "indexed_in_vector_store": indexed}
 
 
 @app.get("/api/search")
