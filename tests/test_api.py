@@ -121,10 +121,10 @@ def test_sync_success(client, monkeypatch):
 # ---- /api/chat ----
 
 def test_chat_missing_api_key(client, monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     res = client.post("/api/chat", json={"messages": [{"role": "user", "content": "hello"}]})
     assert res.status_code == 500
-    assert "ANTHROPIC_API_KEY" in res.json()["detail"]
+    assert "GOOGLE_API_KEY" in res.json()["detail"]
 
 
 # ---- /api/search ----
@@ -145,6 +145,95 @@ def test_reindex_endpoint(client):
         res = client.post("/api/index")
     assert res.status_code == 200
     assert res.json()["indexed"] == 42
+
+
+# ---- /api/activities/{id} ----
+
+def test_activity_detail_not_found(client):
+    res = client.get("/api/activities/nonexistent_id")
+    assert res.status_code == 404
+
+
+def test_activity_detail_found(client):
+    import database, asyncio
+    from conftest import SAMPLE_ACTIVITY
+    asyncio.run(database.upsert_activity(SAMPLE_ACTIVITY))
+    res = client.get("/api/activities/123456789")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["id"] == "123456789"
+    assert data["activity_type"] == "running"
+    assert "raw_data" in data
+
+
+# ---- /api/strava/status ----
+
+def test_strava_status_disconnected(client):
+    res = client.get("/api/strava/status")
+    assert res.status_code == 200
+    assert res.json()["connected"] is False
+
+
+def test_strava_status_connected(client):
+    import database, asyncio, time
+    asyncio.run(
+        database.save_strava_tokens("tok", "ref", int(time.time()) + 3600, 99, "Test Runner")
+    )
+    res = client.get("/api/strava/status")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["connected"] is True
+    assert data["athlete_name"] == "Test Runner"
+
+
+# ---- /api/strava/auth ----
+
+def test_strava_auth_missing_env(client, monkeypatch):
+    monkeypatch.delenv("STRAVA_CLIENT_ID", raising=False)
+    res = client.get("/api/strava/auth", follow_redirects=False)
+    assert res.status_code == 400
+
+
+def test_strava_auth_redirects_to_strava(client, monkeypatch):
+    monkeypatch.setenv("STRAVA_CLIENT_ID", "test_client_id")
+    monkeypatch.setenv("STRAVA_REDIRECT_URI", "http://localhost/cb")
+    res = client.get("/api/strava/auth", follow_redirects=False)
+    assert res.status_code in (302, 307)
+    assert "strava.com" in res.headers["location"]
+    assert "test_client_id" in res.headers["location"]
+
+
+# ---- /api/strava/sync ----
+
+def test_strava_sync_missing_env(client, monkeypatch):
+    monkeypatch.delenv("STRAVA_CLIENT_ID", raising=False)
+    monkeypatch.delenv("STRAVA_CLIENT_SECRET", raising=False)
+    res = client.post("/api/strava/sync")
+    assert res.status_code == 400
+
+
+def test_strava_sync_not_connected(client, monkeypatch):
+    monkeypatch.setenv("STRAVA_CLIENT_ID", "cid")
+    monkeypatch.setenv("STRAVA_CLIENT_SECRET", "csec")
+    import strava_client
+    with patch.object(strava_client, "sync_activities", side_effect=ValueError("Strava not connected")):
+        res = client.post("/api/strava/sync")
+    assert res.status_code == 400
+    assert "not connected" in res.json()["detail"].lower()
+
+
+def test_strava_sync_success(client, monkeypatch):
+    monkeypatch.setenv("STRAVA_CLIENT_ID", "cid")
+    monkeypatch.setenv("STRAVA_CLIENT_SECRET", "csec")
+    import strava_client, vector_store
+    fake = {"activities": 4, "errors": []}
+    with patch.object(strava_client, "sync_activities", return_value=fake), \
+         patch.object(vector_store, "index_all_activities", return_value=4):
+        res = client.post("/api/strava/sync?days=14")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["activities"] == 4
+    assert data["indexed_in_vector_store"] == 4
 
 
 # ---- Frontend ----

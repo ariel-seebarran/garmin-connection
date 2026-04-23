@@ -7,6 +7,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-04-23
+
+### Added
+- **Strava OAuth integration** — full connect flow (`GET /api/strava/auth` → OAuth → callback), token storage in a singleton `strava_tokens` table, automatic token refresh 60 s before expiry
+- `POST /api/strava/sync` — paginates Strava athlete activities (100/page), filters to running sport types, upserts into the shared `activities` table with a `strava_` id prefix to avoid collision with Garmin integer ids
+- `GET /api/activities/{activity_id}` — returns a full activity row with `raw_json` parsed into a `raw_data` dict for the detail modal
+- **Activity detail modal** — clicking any run in the sidebar opens an 8-section detail view (Overview, Pace & Speed, Heart Rate, Elevation, Cadence, Power, Running Dynamics, Training Load). Null/zero values are suppressed; each section only renders if it has at least one value. "Ask Coach Claude" button prefills the chat input
+- **Linear regression trendline** — all charts gain a dashed overlay computed with least-squares; trendline is excluded from hover tooltips via Chart.js `filter` callback
+- **Separate Garmin / Strava modals** — sidebar now shows three buttons: Sync Garmin (blue), Strava (orange with logo), and Performance. Each source opens its own dedicated modal with source-appropriate copy. Strava modal explains which metrics are unavailable (sleep, HRV, readiness)
+- **Source-aware sidebar** — on load the app detects whether Strava is connected and whether Garmin-specific fields (HRV, sleep, resting HR) are present. When Strava-only, six Garmin-exclusive stat cards are hidden (`body.strava-only` CSS class)
+- **Oracle Cloud Free Tier deployment** — `deploy/setup.sh` (interactive, idempotent Ubuntu 22.04 setup: venv, systemd service, nginx reverse proxy, Let's Encrypt SSL, OS firewall), `deploy/coach-claude.service`, `deploy/nginx.conf` (basic auth + 600 s proxy timeouts for long Garmin syncs)
+- **`pyproject.toml`** — replaces `pytest.ini`; declares project metadata, runtime dependencies, dev extras, and `[tool.pytest.ini_options]`
+- **App logo** (`frontend/logo.svg`) — 512×512 SVG with dark navy background, runner silhouette, lightning bolt, and "COACH CLAUDE" wordmark; suitable for Strava OAuth app registration
+- `test_strava_client.py` — 20 new tests covering `get_auth_url`, `_map_activity` (id prefix, pace calc, zero distance, date stripping, sport type mapping, raw_json serialisation), `sync_activities` (filters non-running, correct count, pagination, not-connected error), `_get_valid_token` (refresh on expiry)
+- 9 new `test_database.py` tests: `get_activity_detail` (found / not found), `save_and_get_strava_tokens`, strava_tokens singleton behaviour, `upsert_strava_activity` (stores / idempotent)
+- 9 new `test_api.py` tests: `GET /api/activities/{id}` (found / not found), `GET /api/strava/status` (connected / disconnected), `GET /api/strava/auth` (redirects / missing env), `POST /api/strava/sync` (missing env / not connected / success)
+
+### Changed
+- `strava_client.py` — added log messages for sync start, per-page fetch count (DEBUG), token refresh start and success
+- Sidebar drag-and-drop card ordering and resizable stats/feed divider persist across sessions via `localStorage`
+- Quick-prompt buttons cover additional coaching scenarios (year-over-year comparison, best long runs, spot trends)
+
+### Fixed
+- `test_api.py` `test_chat_missing_api_key` was checking for `ANTHROPIC_API_KEY` but the app uses `GOOGLE_API_KEY` — corrected
+- Ground contact time in activity detail modal now renders as a rounded integer (`Math.round`) instead of a raw float (e.g. `266.6000061035156 ms` → `267 ms`)
+- Goal input field removed from chat header (it was non-functional; training plans are requested via the main chat)
+
 ## [0.3.0] — 2026-04-19
 
 ### Added

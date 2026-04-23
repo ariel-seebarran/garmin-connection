@@ -53,6 +53,7 @@ async def _get_valid_token(client_id: str, client_secret: str) -> str:
         raise ValueError("Strava not connected")
 
     if time.time() > tokens["expires_at"] - 60:
+        log.info("Strava token expired, refreshing for athlete_id=%s", tokens.get("athlete_id"))
         async with httpx.AsyncClient() as http:
             r = await http.post(TOKEN_URL, data={
                 "client_id": client_id,
@@ -66,12 +67,14 @@ async def _get_valid_token(client_id: str, client_secret: str) -> str:
             data["access_token"], data["refresh_token"], data["expires_at"],
             tokens.get("athlete_id"), tokens.get("athlete_name"),
         )
+        log.info("Strava token refreshed successfully")
         return data["access_token"]
 
     return tokens["access_token"]
 
 
 async def sync_activities(client_id: str, client_secret: str, days: int = 30) -> dict:
+    log.info("Starting Strava sync: last %d days", days)
     token = await _get_valid_token(client_id, client_secret)
     after = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp())
 
@@ -95,6 +98,7 @@ async def sync_activities(client_id: str, client_secret: str, days: int = 30) ->
 
             if not activities:
                 break
+            log.debug("Strava sync page %d: %d activities fetched", page, len(activities))
 
             for act in activities:
                 sport_type = act.get("sport_type") or act.get("type", "")
