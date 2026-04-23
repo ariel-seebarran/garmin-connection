@@ -1,0 +1,18 @@
+[Unit]
+Description=Coach Claude - Garmin AI Coach
+After=network.target
+
+[Service]
+Type=exec
+User=__APP_USER__
+WorkingDirectory=__APP_DIR__/app
+ExecStart=__APP_DIR__/venv/bin/uvicorn backend.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+Environment="PATH=__APP_DIR__/venv/bin:/usr/local/bin:/usr/bin:/bin"
+
+# Give the app a moment to start before nginx begins forwarding
+TimeoutStartSec=30
+
+[Install]
+WantedBy=multi-user.target
