@@ -14,8 +14,9 @@ let _currentDays = 30;
 document.addEventListener("DOMContentLoaded", () => {
   loadStats();
   loadActivities();
+  loadPlans();
   initDataSource();
-  document.addEventListener("keydown", e => { if (e.key === "Escape") { closeChart(); closePerfModal(); closeActivityModal(); closeGarminModal(); closeStravaModal(); } });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") { closeChart(); closePerfModal(); closeActivityModal(); closeGarminModal(); closeStravaModal(); closePlanBuilder(); closePlanView(); } });
   initSidebarResize();
   initCardDrag();
   handleStravaCallback();
@@ -1128,6 +1129,180 @@ function askAboutCurrentActivity() {
   closeActivityModal();
   const input = document.getElementById("messageInput");
   input.value = `Analyze my ${km} run on ${date}. What does it tell you about my current fitness?`;
+  input.focus();
+  autoResize(input);
+}
+
+// ---- Training Plans ----
+
+async function loadPlans() {
+  try {
+    const res = await fetch("/api/plans");
+    if (!res.ok) return;
+    const { plans } = await res.json();
+    renderPlanList(plans);
+  } catch (e) {
+    console.warn("Plans load failed:", e);
+  }
+}
+
+function renderPlanList(plans) {
+  const el = document.getElementById("planList");
+  if (!plans.length) {
+    el.innerHTML = '<div class="empty-state">No plans yet — click + Build to get started</div>';
+    return;
+  }
+  el.innerHTML = plans.map(p => `
+    <div class="plan-item" onclick="openPlanView(${p.id})">
+      <div class="plan-item-goal">${escapeHtml(p.race_goal)}</div>
+      <div class="plan-item-meta">
+        ${p.total_weeks ? `${p.total_weeks} weeks` : ""}
+        ${p.race_date ? ` · ${p.race_date}` : ""}
+        <span class="plan-item-date">${(p.created_at || "").slice(0, 10)}</span>
+      </div>
+    </div>
+  `).join("");
+}
+
+function openPlanBuilder() {
+  document.getElementById("planBuilderModal").classList.add("open");
+  document.getElementById("planBuilderStatus").textContent = "";
+  document.getElementById("planBuilderStatus").className = "sync-status";
+  document.getElementById("planSubmitBtn").disabled = false;
+}
+
+function closePlanBuilder(e) {
+  if (!e || e.target === document.getElementById("planBuilderModal")) {
+    document.getElementById("planBuilderModal").classList.remove("open");
+  }
+}
+
+async function submitPlan() {
+  const goal = document.getElementById("planGoal").value.trim();
+  if (!goal) {
+    const s = document.getElementById("planBuilderStatus");
+    s.textContent = "Please enter a race goal.";
+    s.className = "sync-status error";
+    return;
+  }
+
+  const statusEl = document.getElementById("planBuilderStatus");
+  const btn = document.getElementById("planSubmitBtn");
+  statusEl.textContent = "Generating your plan — this takes about 15–30 seconds…";
+  statusEl.className = "sync-status loading";
+  btn.disabled = true;
+
+  try {
+    const res = await fetch("/api/plans", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        race_goal: goal,
+        race_date: document.getElementById("planDate").value || null,
+        days_per_week: parseInt(document.getElementById("planDays").value) || 5,
+        current_weekly_km: parseFloat(document.getElementById("planKm").value) || 30,
+        long_run_day: document.getElementById("planLongRunDay").value,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Generation failed");
+    closePlanBuilder();
+    await loadPlans();
+    openPlanView(data.id, data.plan);
+  } catch (e) {
+    statusEl.textContent = `Error: ${e.message}`;
+    statusEl.className = "sync-status error";
+    btn.disabled = false;
+  }
+}
+
+let _currentPlan = null;
+
+async function openPlanView(planId, planData) {
+  document.getElementById("planViewModal").classList.add("open");
+  if (planData) {
+    _currentPlan = { id: planId, plan: planData };
+    renderPlan(planData);
+    return;
+  }
+  document.getElementById("planViewContent").innerHTML =
+    '<div style="color:var(--text-muted);padding:60px;text-align:center">Loading…</div>';
+  try {
+    const res = await fetch(`/api/plans/${planId}`);
+    if (!res.ok) throw new Error("Not found");
+    const data = await res.json();
+    _currentPlan = data;
+    renderPlan(data.plan);
+  } catch (e) {
+    document.getElementById("planViewContent").innerHTML =
+      `<div style="color:var(--red);padding:20px">Error: ${e.message}</div>`;
+  }
+}
+
+function closePlanView(e) {
+  if (!e || e.target === document.getElementById("planViewModal")) {
+    document.getElementById("planViewModal").classList.remove("open");
+    _currentPlan = null;
+  }
+}
+
+const _effortColor = {
+  easy: "var(--green)", moderate: "var(--accent)", tempo: "var(--yellow)",
+  hard: "#f97316", race: "var(--red)", rest: "var(--text-muted)",
+};
+
+function renderPlan(plan) {
+  document.getElementById("planViewTitle").textContent = plan.title || "Training Plan";
+  document.getElementById("planViewMeta").textContent =
+    [plan.total_weeks ? `${plan.total_weeks} weeks` : null,
+     plan.peak_weekly_km ? `peak ${plan.peak_weekly_km}km/wk` : null]
+    .filter(Boolean).join(" · ");
+  document.getElementById("planViewSummary").textContent = plan.summary || "";
+
+  const PHASE_COLOR = { Base: "#4f8ef7", Build: "#fbbf24", Peak: "#f97316", Taper: "#a78bfa", Race: "#f87171" };
+
+  document.getElementById("planViewContent").innerHTML = (plan.weeks || []).map(week => {
+    const phaseColor = PHASE_COLOR[week.phase] || "var(--accent)";
+    return `
+    <div class="plan-week">
+      <div class="plan-week-header">
+        <div class="plan-week-num">Wk ${week.week_number}</div>
+        <div class="plan-week-info">
+          <span class="plan-phase-badge" style="background:${phaseColor}22;color:${phaseColor}">${week.phase}</span>
+          <span class="plan-week-theme">${escapeHtml(week.theme || "")}</span>
+        </div>
+        <div class="plan-week-total">${week.total_km ?? ""}km</div>
+      </div>
+      <div class="plan-week-days">
+        ${(week.runs || []).map(run => {
+          const isRest = run.effort === "rest" || run.type === "Rest";
+          const color = _effortColor[run.effort] || "var(--text-dim)";
+          return `<div class="plan-day ${isRest ? "plan-day-rest" : ""}">
+            <div class="plan-day-name">${(run.day || "").slice(0, 3)}</div>
+            <div class="plan-day-type" style="color:${color}">${run.type || ""}</div>
+            <div class="plan-day-dist">${run.distance_km > 0 ? run.distance_km + "km" : "—"}</div>
+            ${run.notes ? `<div class="plan-day-notes">${escapeHtml(run.notes)}</div>` : ""}
+          </div>`;
+        }).join("")}
+      </div>
+    </div>`;
+  }).join("");
+}
+
+async function deleteCurrentPlan() {
+  if (!_currentPlan) return;
+  if (!confirm(`Delete "${_currentPlan.plan?.title || "this plan"}"?`)) return;
+  await fetch(`/api/plans/${_currentPlan.id}`, { method: "DELETE" });
+  closePlanView();
+  loadPlans();
+}
+
+function askAboutCurrentPlan() {
+  if (!_currentPlan) return;
+  const plan = _currentPlan.plan;
+  closePlanView();
+  const input = document.getElementById("messageInput");
+  input.value = `I have a training plan called "${plan.title || "my plan"}". Can you review it and suggest any adjustments based on my recent fitness data?`;
   input.focus();
   autoResize(input);
 }

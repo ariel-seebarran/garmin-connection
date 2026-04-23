@@ -91,6 +91,19 @@ CREATE TABLE IF NOT EXISTS strava_tokens (
     athlete_name TEXT,
     updated_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS training_plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    race_goal TEXT NOT NULL,
+    race_date TEXT,
+    weekly_days INTEGER,
+    current_weekly_km REAL,
+    total_weeks INTEGER,
+    peak_weekly_km REAL,
+    created_at TEXT NOT NULL,
+    plan_json TEXT NOT NULL
+);
 """
 
 # Columns to add when upgrading an existing database
@@ -591,3 +604,70 @@ def _pace_from_activity(activity: dict) -> float | None:
     if distance and duration and distance > 0:
         return (duration / 60) / (distance / 1000)
     return None
+
+
+# ---------------------------------------------------------------------------
+# Training plans
+# ---------------------------------------------------------------------------
+
+async def create_training_plan(
+    name: str,
+    race_goal: str,
+    race_date: str | None,
+    weekly_days: int,
+    current_weekly_km: float,
+    plan: dict,
+) -> int:
+    now = datetime.now(timezone.utc).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """INSERT INTO training_plans
+               (name, race_goal, race_date, weekly_days, current_weekly_km,
+                total_weeks, peak_weekly_km, created_at, plan_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                name, race_goal, race_date, weekly_days, current_weekly_km,
+                plan.get("total_weeks"), plan.get("peak_weekly_km"),
+                now, json.dumps(plan),
+            ),
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_training_plans() -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """SELECT id, name, race_goal, race_date, weekly_days, current_weekly_km,
+                      total_weeks, peak_weekly_km, created_at
+               FROM training_plans ORDER BY created_at DESC"""
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+
+async def get_training_plan(plan_id: int) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM training_plans WHERE id = ?", (plan_id,)
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        try:
+            result["plan"] = json.loads(result.pop("plan_json") or "{}")
+        except Exception:
+            result["plan"] = {}
+        return result
+
+
+async def delete_training_plan(plan_id: int) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "DELETE FROM training_plans WHERE id = ?", (plan_id,)
+        )
+        await db.commit()
+        return cursor.rowcount > 0

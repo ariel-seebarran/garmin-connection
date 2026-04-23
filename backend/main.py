@@ -21,6 +21,7 @@ import garmin_client
 import strava_client
 import vector_store
 import agent
+import plan_builder
 from logging_config import setup_logging, get_logger
 
 load_dotenv(Path(__file__).parent.parent / ".env")
@@ -64,6 +65,14 @@ class SyncRequest(BaseModel):
 class ChatRequest(BaseModel):
     messages: list[dict]
     goal: str | None = None
+
+
+class PlanRequest(BaseModel):
+    race_goal: str
+    race_date: str | None = None
+    days_per_week: int = 5
+    current_weekly_km: float = 30.0
+    long_run_day: str = "Sunday"
 
 
 # ---------------------------------------------------------------------------
@@ -436,6 +445,96 @@ async def strava_sync(days: int = 30):
 async def search(q: str, n: int = 8, year: int | None = None):
     hits = await vector_store.search_activities(q, n_results=n, year=year)
     return {"results": hits}
+
+
+# ---------------------------------------------------------------------------
+# Training plans
+# ---------------------------------------------------------------------------
+
+def _fitness_context(activities: list[dict], stats: list[dict]) -> str:
+    lines = []
+    if activities:
+        recent = activities[:15]
+        total_km = sum((a["distance_meters"] or 0) for a in recent) / 1000
+        pace_vals = [a["avg_pace_per_km"] for a in recent if a.get("avg_pace_per_km")]
+        avg_pace = sum(pace_vals) / len(pace_vals) if pace_vals else None
+        hr_vals = [a["avg_heart_rate"] for a in recent if a.get("avg_heart_rate")]
+        avg_hr = round(sum(hr_vals) / len(hr_vals)) if hr_vals else None
+        lines.append(f"Recent training (last {len(recent)} runs): {total_km:.1f}km total")
+        if avg_pace:
+            m, s = int(avg_pace), int((avg_pace % 1) * 60)
+            lines.append(f"Average pace: {m}:{s:02d}/km")
+        if avg_hr:
+            lines.append(f"Average heart rate: {avg_hr} bpm")
+        last = activities[0]
+        if last.get("start_time"):
+            lines.append(
+                f"Most recent run: {last['start_time'][:10]} — "
+                f"{(last['distance_meters'] or 0) / 1000:.1f}km"
+            )
+    else:
+        lines.append("No run history available — build a plan appropriate for a beginner or returning runner.")
+    if stats:
+        s = stats[0]
+        if s.get("resting_heart_rate"):
+            lines.append(f"Resting HR: {s['resting_heart_rate']} bpm")
+    return "\n".join(lines)
+
+
+@app.post("/api/plans")
+async def create_plan(req: PlanRequest):
+    if not os.getenv("GOOGLE_API_KEY"):
+        raise HTTPException(500, "GOOGLE_API_KEY not set in .env")
+
+    activities = await database.get_recent_activities(limit=20)
+    stats = await database.get_recent_daily_stats(days=7)
+    context = _fitness_context(activities, stats)
+
+    try:
+        plan = await plan_builder.generate_training_plan(
+            race_goal=req.race_goal,
+            race_date=req.race_date,
+            days_per_week=req.days_per_week,
+            current_weekly_km=req.current_weekly_km,
+            long_run_day=req.long_run_day,
+            fitness_context=context,
+        )
+    except Exception as e:
+        log.error("Plan generation failed: %s", e)
+        raise HTTPException(500, f"Plan generation failed: {e}")
+
+    plan_id = await database.create_training_plan(
+        name=plan.get("title") or req.race_goal,
+        race_goal=req.race_goal,
+        race_date=req.race_date,
+        weekly_days=req.days_per_week,
+        current_weekly_km=req.current_weekly_km,
+        plan=plan,
+    )
+    log.info("Plan saved: id=%d title=%r", plan_id, plan.get("title"))
+    return {"id": plan_id, "plan": plan}
+
+
+@app.get("/api/plans")
+async def list_plans():
+    plans = await database.get_training_plans()
+    return {"plans": plans}
+
+
+@app.get("/api/plans/{plan_id}")
+async def get_plan(plan_id: int):
+    plan = await database.get_training_plan(plan_id)
+    if not plan:
+        raise HTTPException(404, "Plan not found")
+    return plan
+
+
+@app.delete("/api/plans/{plan_id}")
+async def delete_plan(plan_id: int):
+    deleted = await database.delete_training_plan(plan_id)
+    if not deleted:
+        raise HTTPException(404, "Plan not found")
+    return {"deleted": plan_id}
 
 
 # Serve frontend static files last (catch-all)

@@ -97,6 +97,16 @@
           <div class="empty-state">Sync your data to see activities</div>
         </div>
       </div>
+
+      <div class="plans-feed">
+        <div class="plans-feed-header">
+          <div class="section-title">Training Plans</div>
+          <button class="section-add-btn" onclick="openPlanBuilder()" title="Build a new training plan">+ Build</button>
+        </div>
+        <div id="planList" class="plan-list">
+          <div class="empty-state">No plans yet</div>
+        </div>
+      </div>
     </aside>
 
     <!-- Main chat area -->
@@ -316,6 +326,68 @@
       <div class="chart-container">
         <canvas id="chartCanvas"></canvas>
       </div>
+    </div>
+  </div>
+
+  <!-- Plan Builder Modal -->
+  <div id="planBuilderModal" class="modal-overlay" onclick="closePlanBuilder(event)">
+    <div class="modal plan-builder-modal">
+      <div class="garmin-modal-header">
+        <h2>Build a Training Plan</h2>
+        <button class="chart-close-btn" onclick="closePlanBuilder()">×</button>
+      </div>
+      <p class="modal-desc">Tell Claude your goal and availability — it'll build a personalised week-by-week plan based on your current fitness.</p>
+      <div class="form-group">
+        <label>Race Goal</label>
+        <input id="planGoal" type="text" class="form-input" placeholder="e.g. Sub-4:00 marathon, First 10K, Half marathon PR" />
+      </div>
+      <div class="plan-form-row">
+        <div class="form-group">
+          <label>Race Date <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
+          <input id="planDate" type="date" class="form-input" />
+        </div>
+        <div class="form-group">
+          <label>Days / Week</label>
+          <input id="planDays" type="number" class="form-input" value="5" min="3" max="7" />
+        </div>
+      </div>
+      <div class="plan-form-row">
+        <div class="form-group">
+          <label>Current Weekly km</label>
+          <input id="planKm" type="number" class="form-input" value="30" min="0" step="5" />
+        </div>
+        <div class="form-group">
+          <label>Long Run Day</label>
+          <select id="planLongRunDay" class="form-input">
+            <option>Sunday</option>
+            <option>Saturday</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="closePlanBuilder()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitPlan()" id="planSubmitBtn">Generate Plan</button>
+      </div>
+      <div id="planBuilderStatus" class="sync-status"></div>
+    </div>
+  </div>
+
+  <!-- Plan View Modal -->
+  <div id="planViewModal" class="modal-overlay plan-view-overlay" onclick="closePlanView(event)">
+    <div class="plan-view-modal">
+      <div class="plan-view-header">
+        <div class="plan-view-header-text">
+          <div class="plan-view-title" id="planViewTitle"></div>
+          <div class="plan-view-meta" id="planViewMeta"></div>
+          <div class="plan-view-summary" id="planViewSummary"></div>
+        </div>
+        <div class="plan-view-header-actions">
+          <button class="btn btn-secondary" onclick="askAboutCurrentPlan()" style="font-size:11px;padding:6px 10px">Ask Coach Claude</button>
+          <button class="btn btn-danger" onclick="deleteCurrentPlan()" style="font-size:11px;padding:6px 10px">Delete</button>
+          <button class="chart-close-btn" onclick="closePlanView()">×</button>
+        </div>
+      </div>
+      <div id="planViewContent" class="plan-view-content"></div>
     </div>
   </div>
 
