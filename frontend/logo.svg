@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1a2e"/>
+      <stop offset="100%" style="stop-color:#16213e"/>
+    </linearGradient>
+    <linearGradient id="boltGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f7b731"/>
+      <stop offset="100%" style="stop-color:#f9920a"/>
+    </linearGradient>
+    <linearGradient id="arcGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#4a90e2;stop-opacity:0.2"/>
+      <stop offset="50%" style="stop-color:#4a90e2;stop-opacity:0.8"/>
+      <stop offset="100%" style="stop-color:#7b68ee;stop-opacity:0.2"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="512" height="512" rx="80" fill="url(#bgGrad)"/>
+
+  <!-- Subtle grid lines -->
+  <g stroke="#ffffff" stroke-opacity="0.03" stroke-width="1">
+    <line x1="0" y1="128" x2="512" y2="128"/>
+    <line x1="0" y1="256" x2="512" y2="256"/>
+    <line x1="0" y1="384" x2="512" y2="384"/>
+    <line x1="128" y1="0" x2="128" y2="512"/>
+    <line x1="256" y1="0" x2="256" y2="512"/>
+    <line x1="384" y1="0" x2="384" y2="512"/>
+  </g>
+
+  <!-- Speed arc lines (motion lines behind the runner) -->
+  <g stroke="url(#arcGrad)" stroke-width="2.5" fill="none" stroke-linecap="round" opacity="0.6">
+    <path d="M 90 230 Q 160 180 230 200"/>
+    <path d="M 80 260 Q 155 215 225 235"/>
+    <path d="M 85 290 Q 158 250 228 268"/>
+  </g>
+
+  <!-- Runner silhouette (stylized, mid-stride) -->
+  <g fill="#e8e8f0" opacity="0.95">
+    <!-- Head -->
+    <circle cx="295" cy="155" r="28"/>
+    <!-- Torso (leaning forward) -->
+    <path d="M 285 183 L 265 255 L 295 260 L 315 195 Z"/>
+    <!-- Right arm (back, swinging) -->
+    <path d="M 305 200 L 355 240 L 363 232 L 315 188 Z" rx="4"/>
+    <!-- Left arm (forward) -->
+    <path d="M 278 205 L 235 170 L 228 178 L 272 215 Z" rx="4"/>
+    <!-- Right leg (forward, knee up) -->
+    <path d="M 278 252 L 258 310 L 240 360 L 255 365 L 276 318 L 296 268 Z"/>
+    <!-- Right foot -->
+    <path d="M 240 360 L 225 370 L 252 378 L 258 365 Z"/>
+    <!-- Left leg (back, extending) -->
+    <path d="M 290 255 L 310 310 L 340 350 L 352 342 L 322 305 L 305 258 Z"/>
+    <!-- Left foot -->
+    <path d="M 340 350 L 358 342 L 360 358 L 342 362 Z"/>
+  </g>
+
+  <!-- Lightning bolt (Coach Claude emblem) -->
+  <g filter="url(#glow)">
+    <polygon
+      points="175,140 148,210 170,210 143,285 205,200 178,200 210,140"
+      fill="url(#boltGrad)"
+    />
+  </g>
+
+  <!-- "COACH CLAUDE" text -->
+  <text
+    x="256"
+    y="415"
+    font-family="'Arial', 'Helvetica Neue', sans-serif"
+    font-size="38"
+    font-weight="700"
+    letter-spacing="4"
+    text-anchor="middle"
+    fill="#ffffff"
+    opacity="0.95"
+  >COACH</text>
+  <text
+    x="256"
+    y="458"
+    font-family="'Arial', 'Helvetica Neue', sans-serif"
+    font-size="28"
+    font-weight="400"
+    letter-spacing="8"
+    text-anchor="middle"
+    fill="#f7b731"
+    opacity="0.9"
+  >CLAUDE</text>
+</svg>

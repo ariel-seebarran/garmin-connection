@@ -71,8 +71,27 @@ body {
 .btn-danger { background: #b91c1c; color: #fff; }
 
 .sidebar-btn-row { display: flex; gap: 6px; }
-#syncBtn { flex: 1; }
-.perf-btn { flex-shrink: 0; font-size: 12px; padding: 8px 10px; }
+#garminBtn { flex: 1; }
+.btn-strava-icon {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: #FC4C02;
+  color: #fff;
+  border: none;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 11px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: opacity .15s, box-shadow .15s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.btn-strava-icon:hover { opacity: .88; }
+.btn-strava-icon:active { transform: scale(.97); }
+.btn-strava-icon.connected { box-shadow: 0 0 0 2px #FC4C0260; }
+.perf-btn { flex-shrink: 0; font-size: 13px; padding: 8px 10px; }
 .last-sync { font-size: 11px; color: var(--text-muted); margin-top: 6px; text-align: center; }
 
 /* ---- Performance Modal ---- */
@@ -586,21 +605,39 @@ body {
 }
 @keyframes blink { 50% { opacity: 0; } }
 
-/* ---- Strava ---- */
-.strava-divider {
+/* ---- Garmin modal header ---- */
+.garmin-modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.garmin-modal-header h2 { margin: 0; }
+
+/* ---- Strava modal ---- */
+.strava-modal {
+  width: 400px;
+}
+.strava-modal-header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin: 20px 0 14px;
-  font-size: 11px;
-  color: var(--text-muted);
+  justify-content: space-between;
+  margin-bottom: 16px;
 }
-.strava-divider::before, .strava-divider::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: var(--border);
+.strava-modal-title {
+  font-size: 18px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
 }
+.strava-modal-note {
+  font-size: 13px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+.strava-modal-note.success { background: #052e1630; color: var(--green); }
+.strava-modal-note.error { background: #3b0a0a30; color: var(--red); }
+.strava-modal-desc { font-size: 13px; color: var(--text-dim); line-height: 1.5; margin-bottom: 8px; }
+
+/* Strava-only: hide Garmin-exclusive stat cards */
+body.strava-only .stat-card[data-garmin-only="true"] { display: none; }
+
 .strava-btn {
   display: block;
   width: 100%;

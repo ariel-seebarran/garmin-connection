@@ -14,7 +14,8 @@ let _currentDays = 30;
 document.addEventListener("DOMContentLoaded", () => {
   loadStats();
   loadActivities();
-  document.addEventListener("keydown", e => { if (e.key === "Escape") { closeChart(); closePerfModal(); closeActivityModal(); } });
+  initDataSource();
+  document.addEventListener("keydown", e => { if (e.key === "Escape") { closeChart(); closePerfModal(); closeActivityModal(); closeGarminModal(); closeStravaModal(); } });
   initSidebarResize();
   initCardDrag();
   handleStravaCallback();
@@ -74,9 +75,30 @@ async function loadStats() {
     if (d.total_indexed) {
       syncEl.textContent += ` · ${d.total_indexed} runs indexed`;
     }
+
+    const hasGarminData = d.avg_sleep_score_7d != null || d.avg_hrv_7d != null || d.avg_resting_hr_7d != null;
+    updateSidebarForSource(hasGarminData);
   } catch (e) {
     console.warn("Stats load failed:", e);
   }
+}
+
+// ---- Data source detection ----
+async function initDataSource() {
+  try {
+    const res = await fetch("/api/strava/status");
+    const d = await res.json();
+    window._stravaConnected = d.connected;
+    window._stravaAthlete = d.athlete_name || null;
+    updateStravaBtn();
+  } catch (_) {
+    window._stravaConnected = false;
+  }
+}
+
+function updateSidebarForSource(hasGarminData) {
+  const stravaOnly = window._stravaConnected && !hasGarminData;
+  document.body.classList.toggle("strava-only", stravaOnly);
 }
 
 // ---- Activities ----
@@ -341,19 +363,40 @@ function scrollToBottom() {
   el.scrollTop = el.scrollHeight;
 }
 
-// ---- Sync Modal ----
-function openSyncModal() {
+// ---- Garmin Modal ----
+function openGarminModal() {
   document.getElementById("syncModal").classList.add("open");
   document.getElementById("syncStatus").textContent = "";
   document.getElementById("syncStatus").className = "sync-status";
   document.getElementById("mfaGroup").style.display = "none";
   document.getElementById("mfaCode").value = "";
+}
+
+function closeGarminModal(e) {
+  if (!e || e.target === document.getElementById("syncModal")) {
+    document.getElementById("syncModal").classList.remove("open");
+  }
+}
+
+// ---- Strava Modal ----
+function openStravaModal(note) {
+  document.getElementById("stravaModal").classList.add("open");
+  document.getElementById("stravaModalStatus").textContent = "";
+  document.getElementById("stravaModalStatus").className = "sync-status";
+  const noteEl = document.getElementById("stravaModalNote");
+  if (note) {
+    noteEl.textContent = note;
+    noteEl.className = "strava-modal-note " + (note.startsWith("✓") ? "success" : "error");
+  } else {
+    noteEl.textContent = "";
+    noteEl.className = "strava-modal-note";
+  }
   loadStravaSection();
 }
 
-function closeSyncModal(e) {
-  if (!e || e.target === document.getElementById("syncModal")) {
-    document.getElementById("syncModal").classList.remove("open");
+function closeStravaModal(e) {
+  if (!e || e.target === document.getElementById("stravaModal")) {
+    document.getElementById("stravaModal").classList.remove("open");
   }
 }
 
@@ -406,7 +449,7 @@ async function startSync() {
     statusEl.className = "sync-status success";
 
     setTimeout(() => {
-      closeSyncModal();
+      closeGarminModal();
       loadStats();
       loadActivities();
     }, 2000);
@@ -757,49 +800,63 @@ function handleStravaCallback() {
   const params = new URLSearchParams(window.location.search);
   if (params.has("strava_connected")) {
     window.history.replaceState({}, "", "/");
-    openSyncModal();
-    const statusEl = document.getElementById("syncStatus");
-    statusEl.textContent = "✓ Strava connected successfully!";
-    statusEl.className = "sync-status success";
+    openStravaModal("✓ Strava connected! Now sync your activities below.");
   } else if (params.has("strava_error")) {
     window.history.replaceState({}, "", "/");
-    openSyncModal();
-    const statusEl = document.getElementById("syncStatus");
-    statusEl.textContent = "Strava connection failed. Check your STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET in .env.";
-    statusEl.className = "sync-status error";
+    openStravaModal("Connection failed. Check your STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET in .env.");
   }
 }
 
 async function loadStravaSection() {
-  const el = document.getElementById("stravaSection");
+  const el = document.getElementById("stravaModalContent");
   el.innerHTML = '<span style="font-size:12px;color:var(--text-muted)">Loading…</span>';
   try {
     const res = await fetch("/api/strava/status");
     const d = await res.json();
+    window._stravaConnected = d.connected;
+    window._stravaAthlete = d.athlete_name || null;
+    updateStravaBtn();
+
     if (d.connected) {
       el.innerHTML = `
         <div class="strava-connected-row">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="#FC4C02"><path d="M15.387 17.944l-2.089-4.116h-3.065L15.387 24l5.15-10.172h-3.066m-7.008-5.599l2.836 5.598h4.172L10.463 0l-7 13.828h4.169"/></svg>
           ${escapeHtml(d.athlete_name || "Strava connected")}
         </div>
+        <p class="strava-modal-desc">Sync your runs from Strava. Distance, pace, HR, elevation, and cadence will be imported.</p>
         <div class="form-group">
           <label>Days to sync</label>
           <input id="stravaDays" type="number" class="form-input" value="30" min="1" max="365" />
         </div>
-        <button class="strava-btn" id="stravaSyncBtn" onclick="syncStrava()">Sync Strava</button>`;
+        <button class="strava-btn" id="stravaSyncBtn" onclick="syncStrava()">Sync Activities</button>`;
     } else {
-      el.innerHTML = `<a href="/api/strava/auth" class="strava-btn">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:6px"><path d="M15.387 17.944l-2.089-4.116h-3.065L15.387 24l5.15-10.172h-3.066m-7.008-5.599l2.836 5.598h4.172L10.463 0l-7 13.828h4.169"/></svg>
-        Connect Strava</a>`;
+      el.innerHTML = `
+        <p class="strava-modal-desc">Connect your Strava account to import runs. You'll get distance, pace, heart rate, elevation, and cadence data.</p>
+        <p class="strava-modal-desc" style="margin-top:6px;font-size:11px">Note: Strava doesn't provide sleep, HRV, or training readiness — those are Garmin-only metrics.</p>
+        <a href="/api/strava/auth" class="strava-btn" style="margin-top:12px">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:6px"><path d="M15.387 17.944l-2.089-4.116h-3.065L15.387 24l5.15-10.172h-3.066m-7.008-5.599l2.836 5.598h4.172L10.463 0l-7 13.828h4.169"/></svg>
+          Connect with Strava</a>`;
     }
   } catch (e) {
     el.innerHTML = '<span style="font-size:12px;color:var(--text-muted)">Could not load Strava status.</span>';
   }
 }
 
+function updateStravaBtn() {
+  const btn = document.getElementById("stravaBtn");
+  if (!btn) return;
+  if (window._stravaConnected) {
+    btn.classList.add("connected");
+    btn.title = window._stravaAthlete ? `Strava: ${window._stravaAthlete}` : "Strava connected";
+  } else {
+    btn.classList.remove("connected");
+    btn.title = "Connect or sync Strava";
+  }
+}
+
 async function syncStrava() {
   const days = parseInt(document.getElementById("stravaDays")?.value) || 30;
-  const statusEl = document.getElementById("syncStatus");
+  const statusEl = document.getElementById("stravaModalStatus");
   const btn = document.getElementById("stravaSyncBtn");
 
   statusEl.textContent = `Syncing last ${days} days from Strava…`;
@@ -817,7 +874,7 @@ async function syncStrava() {
     const errs = data.errors?.length ? ` (${data.errors.length} errors)` : "";
     statusEl.textContent = `✓ Synced ${data.activities} runs from Strava · ${data.indexed_in_vector_store} indexed${errs}`;
     statusEl.className = "sync-status success";
-    setTimeout(() => { closeSyncModal(); loadStats(); loadActivities(); }, 2000);
+    setTimeout(() => { closeStravaModal(); loadStats(); loadActivities(); }, 2000);
   } catch (e) {
     statusEl.textContent = `Network error: ${e.message}`;
     statusEl.className = "sync-status error";
