@@ -1,6 +1,6 @@
 import aiosqlite
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date, timedelta
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "garmin.db"
@@ -120,6 +120,7 @@ _COLUMN_MIGRATIONS = [
     ("daily_stats", "intensity_minutes_vigorous", "INTEGER"),
     ("daily_stats", "avg_spo2", "REAL"),
     ("daily_stats", "avg_respiration_rate", "REAL"),
+    ("training_plans", "garmin_workout_ids", "TEXT"),
 ]
 
 
@@ -531,13 +532,27 @@ async def get_activity_detail(activity_id: str) -> dict | None:
 async def get_recent_activities(limit: int = 30) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
+        # Exclude Strava activities that have a matching Garmin activity within 5 minutes
+        # (Garmin auto-uploads to Strava, so both sources record the same run)
         cursor = await db.execute(
-            """SELECT id, activity_type, name, start_time, duration_seconds, distance_meters,
-                      avg_pace_per_km, avg_heart_rate, max_heart_rate, elevation_gain,
-                      calories, aerobic_training_effect, anaerobic_training_effect,
-                      avg_power, avg_vertical_oscillation, avg_ground_contact_time,
-                      avg_stride_length, training_stress_score
-               FROM activities ORDER BY start_time DESC LIMIT ?""",
+            """SELECT a.id, a.activity_type, a.name, a.start_time, a.duration_seconds, a.distance_meters,
+                      a.avg_pace_per_km, a.avg_heart_rate, a.max_heart_rate, a.elevation_gain,
+                      a.calories, a.aerobic_training_effect, a.anaerobic_training_effect,
+                      a.avg_power, a.avg_vertical_oscillation, a.avg_ground_contact_time,
+                      a.avg_stride_length, a.training_stress_score
+               FROM activities a
+               WHERE NOT (
+                   a.id LIKE 'strava_%'
+                   AND EXISTS (
+                       SELECT 1 FROM activities g
+                       WHERE g.id NOT LIKE 'strava_%'
+                       AND ABS(
+                           CAST(strftime('%s', g.start_time) AS INTEGER) -
+                           CAST(strftime('%s', a.start_time) AS INTEGER)
+                       ) < 300
+                   )
+               )
+               ORDER BY a.start_time DESC LIMIT ?""",
             (limit,),
         )
         rows = await cursor.fetchall()
@@ -545,19 +560,21 @@ async def get_recent_activities(limit: int = 30) -> list[dict]:
 
 
 async def get_recent_sleep(days: int = 14) -> list[dict]:
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             """SELECT date, sleep_score, total_sleep_seconds, deep_sleep_seconds,
                       light_sleep_seconds, rem_sleep_seconds, awake_seconds, avg_hrv
-               FROM sleep_data ORDER BY date DESC LIMIT ?""",
-            (days,),
+               FROM sleep_data WHERE date >= ? ORDER BY date DESC""",
+            (cutoff,),
         )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
 
 async def get_recent_daily_stats(days: int = 14) -> list[dict]:
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
@@ -566,23 +583,25 @@ async def get_recent_daily_stats(days: int = 14) -> list[dict]:
                       total_calories, floors_climbed,
                       intensity_minutes_moderate, intensity_minutes_vigorous,
                       avg_spo2, avg_respiration_rate
-               FROM daily_stats ORDER BY date DESC LIMIT ?""",
-            (days,),
+               FROM daily_stats WHERE date >= ? ORDER BY date DESC""",
+            (cutoff,),
         )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
 
 async def get_recent_training_metrics(days: int = 30) -> list[dict]:
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             """SELECT date, vo2_max, training_readiness_score, training_readiness_level,
                       race_5k_seconds, race_10k_seconds, race_half_seconds, race_marathon_seconds
                FROM training_metrics
-               WHERE vo2_max IS NOT NULL OR training_readiness_score IS NOT NULL
-               ORDER BY date DESC LIMIT ?""",
-            (days,),
+               WHERE (vo2_max IS NOT NULL OR training_readiness_score IS NOT NULL)
+                 AND date >= ?
+               ORDER BY date DESC""",
+            (cutoff,),
         )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
@@ -671,3 +690,23 @@ async def delete_training_plan(plan_id: int) -> bool:
         )
         await db.commit()
         return cursor.rowcount > 0
+
+
+async def store_garmin_workout_ids(plan_id: int, workout_ids: list[int]) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE training_plans SET garmin_workout_ids = ? WHERE id = ?",
+            (json.dumps(workout_ids), plan_id),
+        )
+        await db.commit()
+
+
+async def get_garmin_workout_ids(plan_id: int) -> list[int]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT garmin_workout_ids FROM training_plans WHERE id = ?", (plan_id,)
+        )
+        row = await cursor.fetchone()
+        if row and row[0]:
+            return json.loads(row[0])
+        return []

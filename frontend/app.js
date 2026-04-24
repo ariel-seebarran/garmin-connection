@@ -15,8 +15,9 @@ document.addEventListener("DOMContentLoaded", () => {
   loadStats();
   loadActivities();
   loadPlans();
+  loadPerfData();
   initDataSource();
-  document.addEventListener("keydown", e => { if (e.key === "Escape") { closeChart(); closePerfModal(); closeActivityModal(); closeGarminModal(); closeStravaModal(); closePlanBuilder(); closePlanView(); } });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") { closeChart(); closeActivityModal(); closeGarminModal(); closeStravaModal(); closePlanBuilder(); closePlanView(); } });
   initSidebarResize();
   initCardDrag();
   handleStravaCallback();
@@ -77,7 +78,7 @@ async function loadStats() {
       syncEl.textContent += ` · ${d.total_indexed} runs indexed`;
     }
 
-    const hasGarminData = d.avg_sleep_score_7d != null || d.avg_hrv_7d != null || d.avg_resting_hr_7d != null;
+    const hasGarminData = d.last_sync != null;
     updateSidebarForSource(hasGarminData);
   } catch (e) {
     console.warn("Stats load failed:", e);
@@ -722,18 +723,7 @@ function renderChartStats(el, data, unit, lowerIsBetter) {
   `;
 }
 
-// ---- Performance Modal ----
-
-function openPerfModal() {
-  document.getElementById("perfModal").classList.add("open");
-  loadPerfData();
-}
-
-function closePerfModal(e) {
-  if (!e || e.target === document.getElementById("perfModal")) {
-    document.getElementById("perfModal").classList.remove("open");
-  }
-}
+// ---- Performance (right sidebar) ----
 
 async function loadPerfData() {
   try {
@@ -1202,6 +1192,7 @@ async function submitPlan() {
         days_per_week: parseInt(document.getElementById("planDays").value) || 5,
         current_weekly_km: parseFloat(document.getElementById("planKm").value) || 30,
         long_run_day: document.getElementById("planLongRunDay").value,
+        plan_type: document.querySelector('input[name="planType"]:checked')?.value || "pace",
       }),
     });
     const data = await res.json();
@@ -1220,6 +1211,12 @@ let _currentPlan = null;
 
 async function openPlanView(planId, planData) {
   document.getElementById("planViewModal").classList.add("open");
+  const pushBtn = document.getElementById("pushToGarminBtn");
+  if (pushBtn) { pushBtn.disabled = false; pushBtn.textContent = "⌚ Send to Watch"; pushBtn.style.display = ""; }
+  const removeBtn = document.getElementById("removeFromGarminBtn");
+  if (removeBtn) { removeBtn.disabled = false; removeBtn.style.display = "none"; removeBtn.textContent = "⌚ Remove from Watch"; }
+  const pushStatus = document.getElementById("pushToGarminStatus");
+  if (pushStatus) pushStatus.textContent = "";
   if (planData) {
     _currentPlan = { id: planId, plan: planData };
     renderPlan(planData);
@@ -1277,16 +1274,77 @@ function renderPlan(plan) {
         ${(week.runs || []).map(run => {
           const isRest = run.effort === "rest" || run.type === "Rest";
           const color = _effortColor[run.effort] || "var(--text-dim)";
+          let volume = "—";
+          if (run.duration_min > 0 && run.distance_km <= 0) {
+            volume = run.duration_min + "min";
+          } else if (run.distance_km > 0) {
+            volume = run.distance_km + "km";
+            if (run.pace_fast && run.pace_slow) volume += ` · ${run.pace_fast}–${run.pace_slow}/km`;
+          }
+          const hrTag = run.hr_zone ? `<span style="font-size:10px;color:var(--text-muted)">Z${run.hr_zone}</span>` : "";
           return `<div class="plan-day ${isRest ? "plan-day-rest" : ""}">
             <div class="plan-day-name">${(run.day || "").slice(0, 3)}</div>
             <div class="plan-day-type" style="color:${color}">${run.type || ""}</div>
-            <div class="plan-day-dist">${run.distance_km > 0 ? run.distance_km + "km" : "—"}</div>
+            <div class="plan-day-dist">${volume} ${hrTag}</div>
             ${run.notes ? `<div class="plan-day-notes">${escapeHtml(run.notes)}</div>` : ""}
           </div>`;
         }).join("")}
       </div>
     </div>`;
   }).join("");
+}
+
+async function pushPlanToGarmin() {
+  if (!_currentPlan) return;
+  const btn = document.getElementById("pushToGarminBtn");
+  const status = document.getElementById("pushToGarminStatus");
+  btn.disabled = true;
+  btn.textContent = "Sending…";
+  status.style.color = "var(--text-muted)";
+  status.textContent = "Uploading workouts to Garmin Connect…";
+  try {
+    const res = await fetch(`/api/plans/${_currentPlan.id}/push-to-garmin`, { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Push failed");
+    const warn = data.errors?.length ? ` (${data.errors.length} failed)` : "";
+    status.style.color = "var(--green)";
+    status.textContent = `✓ ${data.scheduled} workouts scheduled to Garmin Connect${warn}`;
+    btn.textContent = "✓ Sent";
+    const removeBtn = document.getElementById("removeFromGarminBtn");
+    if (removeBtn) removeBtn.style.display = "";
+  } catch (e) {
+    status.style.color = "var(--red)";
+    status.textContent = `Error: ${e.message}`;
+    btn.disabled = false;
+    btn.textContent = "⌚ Send to Watch";
+  }
+}
+
+async function removePlanFromGarmin() {
+  if (!_currentPlan) return;
+  if (!confirm("Remove all workouts for this plan from your Garmin Connect calendar?")) return;
+  const btn = document.getElementById("removeFromGarminBtn");
+  const status = document.getElementById("pushToGarminStatus");
+  btn.disabled = true;
+  btn.textContent = "Removing…";
+  status.style.color = "var(--text-muted)";
+  status.textContent = "Removing workouts from Garmin Connect…";
+  try {
+    const res = await fetch(`/api/plans/${_currentPlan.id}/garmin-workouts`, { method: "DELETE" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Remove failed");
+    const warn = data.errors?.length ? ` (${data.errors.length} failed)` : "";
+    status.style.color = "var(--green)";
+    status.textContent = `✓ ${data.deleted} workouts removed from Garmin Connect${warn}`;
+    btn.style.display = "none";
+    const pushBtn = document.getElementById("pushToGarminBtn");
+    if (pushBtn) { pushBtn.disabled = false; pushBtn.textContent = "⌚ Send to Watch"; }
+  } catch (e) {
+    status.style.color = "var(--red)";
+    status.textContent = `Error: ${e.message}`;
+    btn.disabled = false;
+    btn.textContent = "⌚ Remove from Watch";
+  }
 }
 
 async function deleteCurrentPlan() {

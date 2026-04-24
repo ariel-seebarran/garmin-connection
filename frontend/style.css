@@ -14,6 +14,7 @@
   --text-muted: #6b7280;
   --text-dim: #94a3b8;
   --sidebar-w: 320px;
+  --right-sidebar-w: 260px;
 }
 
 body {
@@ -69,6 +70,12 @@ body {
 .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
 .btn-secondary:hover { opacity: .8; }
 .btn-danger { background: #b91c1c; color: #fff; }
+.btn-garmin { background: #007A33; color: #fff; }
+.btn-garmin:hover { opacity: .88; }
+.btn-garmin:disabled { opacity: .5; cursor: not-allowed; }
+.btn-garmin-remove { background: #5a1a1a; color: #fff; }
+.btn-garmin-remove:hover { opacity: .88; }
+.btn-garmin-remove:disabled { opacity: .5; cursor: not-allowed; }
 
 .sidebar-btn-row { display: flex; gap: 6px; }
 #garminBtn { flex: 1; }
@@ -91,13 +98,47 @@ body {
 .btn-strava-icon:hover { opacity: .88; }
 .btn-strava-icon:active { transform: scale(.97); }
 .btn-strava-icon.connected { box-shadow: 0 0 0 2px #FC4C0260; }
-.perf-btn { flex-shrink: 0; font-size: 13px; padding: 8px 10px; }
 .last-sync { font-size: 11px; color: var(--text-muted); margin-top: 6px; text-align: center; }
 
-/* ---- Performance Modal ---- */
-.perf-modal { width: 520px; max-height: 80vh; overflow-y: auto; }
-.perf-modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
-.perf-modal-header h2 { margin: 0; }
+/* ---- Right Sidebar ---- */
+.right-sidebar {
+  width: var(--right-sidebar-w);
+  min-width: var(--right-sidebar-w);
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.right-section {
+  padding: 14px 14px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+.right-section-plans {
+  flex: 1;
+  overflow-y: auto;
+  flex-shrink: 1;
+  min-height: 0;
+}
+.right-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.right-subsection-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .8px;
+  color: var(--text-muted);
+  margin: 10px 0 5px;
+}
+
+/* ---- Performance (inline right sidebar) ---- */
 .perf-section { margin-bottom: 24px; }
 .perf-section-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; color: var(--text-muted); margin-bottom: 10px; }
 
@@ -107,7 +148,7 @@ body {
 .perf-vo2-date { font-size: 11px; color: var(--text-muted); margin-left: auto; }
 
 .perf-race-date { font-size: 11px; color: var(--text-muted); margin-bottom: 10px; }
-.perf-race-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.perf-race-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
 .perf-race-card {
   background: var(--surface2);
   border: 1px solid var(--border);
@@ -724,15 +765,7 @@ body.strava-only .stat-card[data-garmin-only="true"] { display: none; }
   gap: 8px;
 }
 
-/* ---- Plans sidebar section ---- */
-.plans-feed {
-  border-top: 1px solid var(--border);
-  padding: 12px;
-  flex-shrink: 0;
-  max-height: 220px;
-  overflow-y: auto;
-}
-.plans-feed-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+/* ---- Plans (right sidebar) ---- */
 .section-add-btn {
   appearance: none;
   background: var(--surface2);
@@ -765,6 +798,13 @@ body.strava-only .stat-card[data-garmin-only="true"] { display: none; }
 /* ---- Plan Builder Modal ---- */
 .plan-builder-modal { width: 480px; }
 .plan-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.plan-type-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.plan-type-option { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; transition: border-color .15s; }
+.plan-type-option:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.plan-type-option input[type="radio"] { margin-top: 2px; accent-color: var(--accent); flex-shrink: 0; }
+.plan-type-label { display: flex; flex-direction: column; gap: 2px; }
+.plan-type-label strong { font-size: 13px; }
+.plan-type-label small { font-size: 11px; color: var(--text-muted); }
 
 /* ---- Plan View Modal ---- */
 .plan-view-overlay {
@@ -791,7 +831,8 @@ body.strava-only .stat-card[data-garmin-only="true"] { display: none; }
   border-bottom: 1px solid var(--border);
 }
 .plan-view-header-text { flex: 1; min-width: 0; }
-.plan-view-header-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.plan-view-header-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; }
+.plan-view-header-buttons { display: flex; gap: 6px; align-items: center; }
 .plan-view-title { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
 .plan-view-meta { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
 .plan-view-summary { font-size: 13px; color: var(--text-dim); line-height: 1.55; }

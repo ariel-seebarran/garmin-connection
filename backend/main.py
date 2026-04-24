@@ -73,6 +73,7 @@ class PlanRequest(BaseModel):
     days_per_week: int = 5
     current_weekly_km: float = 30.0
     long_run_day: str = "Sunday"
+    plan_type: str = "pace"
 
 
 # ---------------------------------------------------------------------------
@@ -339,7 +340,7 @@ async def get_chart_data(metric: str, days: int = 30):
         return {"data": data, "unit": "km", "title": "Weekly Distance"}
 
     elif metric == "pace":
-        rows = await database.get_recent_activities(limit=500)
+        rows = await database.get_recent_activities(limit=max(days * 3, 500))
         cutoff = (date.today() - timedelta(days=days)).isoformat()
         data = [
             {"date": (a.get("start_time") or "")[:10], "value": round(a["avg_pace_per_km"], 2)}
@@ -486,6 +487,19 @@ async def create_plan(req: PlanRequest):
     if not os.getenv("GOOGLE_API_KEY"):
         raise HTTPException(500, "GOOGLE_API_KEY not set in .env")
 
+    if req.race_date:
+        try:
+            from datetime import date as _date
+            weeks = ((_date.fromisoformat(req.race_date) - _date.today()).days) // 7
+            if weeks < plan_builder.MIN_WEEKS:
+                raise HTTPException(
+                    400,
+                    f"Race date is only {weeks} week{'s' if weeks != 1 else ''} away — "
+                    f"a minimum of {plan_builder.MIN_WEEKS} weeks is needed to build a meaningful plan."
+                )
+        except ValueError:
+            raise HTTPException(400, "Invalid race date format.")
+
     activities = await database.get_recent_activities(limit=20)
     stats = await database.get_recent_daily_stats(days=7)
     context = _fitness_context(activities, stats)
@@ -498,6 +512,7 @@ async def create_plan(req: PlanRequest):
             current_weekly_km=req.current_weekly_km,
             long_run_day=req.long_run_day,
             fitness_context=context,
+            plan_type=req.plan_type,
         )
     except Exception as e:
         log.error("Plan generation failed: %s", e)
@@ -535,6 +550,34 @@ async def delete_plan(plan_id: int):
     if not deleted:
         raise HTTPException(404, "Plan not found")
     return {"deleted": plan_id}
+
+
+@app.post("/api/plans/{plan_id}/push-to-garmin")
+async def push_plan_to_garmin(plan_id: int):
+    plan_data = await database.get_training_plan(plan_id)
+    if not plan_data:
+        raise HTTPException(404, "Plan not found")
+    try:
+        result = await garmin_client.push_plan_to_garmin(plan_data["plan"])
+        if result.get("workout_ids"):
+            await database.store_garmin_workout_ids(plan_id, result["workout_ids"])
+        return result
+    except garmin_client.GarminSyncError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/plans/{plan_id}/garmin-workouts")
+async def delete_plan_from_garmin(plan_id: int):
+    workout_ids = await database.get_garmin_workout_ids(plan_id)
+    if not workout_ids:
+        raise HTTPException(404, "No Garmin workouts found for this plan — push to Garmin first")
+    try:
+        result = await garmin_client.delete_plan_from_garmin(workout_ids)
+        if result["deleted"] > 0:
+            await database.store_garmin_workout_ids(plan_id, [])
+        return result
+    except garmin_client.GarminSyncError as e:
+        raise HTTPException(400, str(e))
 
 
 # Serve frontend static files last (catch-all)

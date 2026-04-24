@@ -21,7 +21,6 @@
             <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M15.387 17.944l-2.089-4.116h-3.065L15.387 24l5.15-10.172h-3.066m-7.008-5.599l2.836 5.598h4.172L10.463 0l-7 13.828h4.169"/></svg>
             Strava
           </button>
-          <button class="btn btn-secondary perf-btn" onclick="openPerfModal()" title="Race predictions & VO2 max">🏅</button>
         </div>
         <div id="lastSync" class="last-sync"></div>
       </div>
@@ -98,15 +97,6 @@
         </div>
       </div>
 
-      <div class="plans-feed">
-        <div class="plans-feed-header">
-          <div class="section-title">Training Plans</div>
-          <button class="section-add-btn" onclick="openPlanBuilder()" title="Build a new training plan">+ Build</button>
-        </div>
-        <div id="planList" class="plan-list">
-          <div class="empty-state">No plans yet</div>
-        </div>
-      </div>
     </aside>
 
     <!-- Main chat area -->
@@ -158,6 +148,54 @@
         </button>
       </div>
     </main>
+
+    <!-- Right Sidebar -->
+    <aside class="right-sidebar">
+      <div class="right-section right-section-plans">
+        <div class="right-section-header">
+          <div class="section-title">Training Plans</div>
+          <button class="section-add-btn" onclick="openPlanBuilder()" title="Build a new training plan">+ Build</button>
+        </div>
+        <div id="planList" class="plan-list">
+          <div class="empty-state">No plans yet</div>
+        </div>
+      </div>
+
+      <div class="right-section">
+        <div class="right-section-header">
+          <div class="section-title">Performance</div>
+        </div>
+        <div class="perf-vo2-row">
+          <span class="perf-vo2-value" id="perfVo2">—</span>
+          <span class="perf-vo2-unit">ml/kg/min</span>
+        </div>
+        <div class="perf-vo2-date" id="perfVo2Date"></div>
+        <div class="right-subsection-title">Race Predictions</div>
+        <div id="perfRaceDate" class="perf-race-date"></div>
+        <div class="perf-race-grid">
+          <div class="perf-race-card">
+            <div class="perf-race-dist">5K</div>
+            <div class="perf-race-time" id="perf5k">—</div>
+          </div>
+          <div class="perf-race-card">
+            <div class="perf-race-dist">10K</div>
+            <div class="perf-race-time" id="perf10k">—</div>
+          </div>
+          <div class="perf-race-card">
+            <div class="perf-race-dist">Half</div>
+            <div class="perf-race-time" id="perfHalf">—</div>
+          </div>
+          <div class="perf-race-card">
+            <div class="perf-race-dist">Marathon</div>
+            <div class="perf-race-time" id="perfMarathon">—</div>
+          </div>
+        </div>
+        <div id="perfNoRace" class="perf-no-data" style="display:none">Sync Garmin data to see predictions.</div>
+        <div class="right-subsection-title" style="margin-top:16px">Training Readiness <span style="font-size:9px;font-weight:400">(30 days)</span></div>
+        <div id="perfReadinessChart" class="perf-readiness-list"></div>
+      </div>
+
+    </aside>
   </div>
 
   <!-- Garmin Sync Modal -->
@@ -237,56 +275,6 @@
     </div>
   </template>
 
-  <!-- Performance Modal -->
-  <div id="perfModal" class="modal-overlay" onclick="closePerfModal(event)">
-    <div class="modal perf-modal">
-      <div class="perf-modal-header">
-        <h2>Performance</h2>
-        <button class="chart-close-btn" onclick="closePerfModal()">×</button>
-      </div>
-
-      <div class="perf-section">
-        <div class="perf-section-title">VO2 Max</div>
-        <div class="perf-vo2-row">
-          <span class="perf-vo2-value" id="perfVo2">—</span>
-          <span class="perf-vo2-unit">ml/kg/min</span>
-          <span class="perf-vo2-date" id="perfVo2Date"></span>
-        </div>
-      </div>
-
-      <div class="perf-section">
-        <div class="perf-section-title">Race Predictions</div>
-        <div id="perfRaceDate" class="perf-race-date"></div>
-        <div class="perf-race-grid">
-          <div class="perf-race-card">
-            <div class="perf-race-dist">5K</div>
-            <div class="perf-race-time" id="perf5k">—</div>
-          </div>
-          <div class="perf-race-card">
-            <div class="perf-race-dist">10K</div>
-            <div class="perf-race-time" id="perf10k">—</div>
-          </div>
-          <div class="perf-race-card">
-            <div class="perf-race-dist">Half</div>
-            <div class="perf-race-time" id="perfHalf">—</div>
-          </div>
-          <div class="perf-race-card">
-            <div class="perf-race-dist">Marathon</div>
-            <div class="perf-race-time" id="perfMarathon">—</div>
-          </div>
-        </div>
-        <div id="perfNoRace" class="perf-no-data" style="display:none">
-          No race predictions yet — sync your Garmin data to populate these.
-        </div>
-      </div>
-
-      <div class="perf-section">
-        <div class="perf-section-title">Training Readiness (last 30 days)</div>
-        <div id="perfReadinessChart" class="perf-readiness-list"></div>
-      </div>
-    </div>
-  </div>
-
   <!-- Activity Detail Modal -->
   <div id="activityModal" class="modal-overlay" onclick="closeActivityModal(event)">
     <div class="modal activity-modal">
@@ -315,6 +303,7 @@
         <div class="chart-modal-title" id="chartModalTitle"></div>
         <div style="display:flex;align-items:center;gap:8px">
           <div class="chart-period-selector">
+            <button class="period-btn" data-days="7" onclick="setChartPeriod(7)">7d</button>
             <button class="period-btn" data-days="30" onclick="setChartPeriod(30)">30d</button>
             <button class="period-btn" data-days="90" onclick="setChartPeriod(90)">90d</button>
             <button class="period-btn" data-days="365" onclick="setChartPeriod(365)">1yr</button>
@@ -364,6 +353,25 @@
           </select>
         </div>
       </div>
+      <div class="form-group">
+        <label>Plan Style</label>
+        <div class="plan-type-toggle">
+          <label class="plan-type-option">
+            <input type="radio" name="planType" value="pace" checked />
+            <span class="plan-type-label">
+              <strong>Pace &amp; Distance</strong>
+              <small>km targets with min/km pace zones</small>
+            </span>
+          </label>
+          <label class="plan-type-option">
+            <input type="radio" name="planType" value="hr" />
+            <span class="plan-type-label">
+              <strong>HR &amp; Time</strong>
+              <small>time-based with heart rate zones</small>
+            </span>
+          </label>
+        </div>
+      </div>
       <div class="modal-actions">
         <button class="btn btn-secondary" onclick="closePlanBuilder()">Cancel</button>
         <button class="btn btn-primary" onclick="submitPlan()" id="planSubmitBtn">Generate Plan</button>
@@ -382,9 +390,14 @@
           <div class="plan-view-summary" id="planViewSummary"></div>
         </div>
         <div class="plan-view-header-actions">
-          <button class="btn btn-secondary" onclick="askAboutCurrentPlan()" style="font-size:11px;padding:6px 10px">Ask Coach Claude</button>
-          <button class="btn btn-danger" onclick="deleteCurrentPlan()" style="font-size:11px;padding:6px 10px">Delete</button>
-          <button class="chart-close-btn" onclick="closePlanView()">×</button>
+          <div class="plan-view-header-buttons">
+            <button class="btn btn-secondary" onclick="askAboutCurrentPlan()" style="font-size:11px;padding:6px 10px">Ask Coach Claude</button>
+            <button class="btn btn-garmin" id="pushToGarminBtn" onclick="pushPlanToGarmin()" style="font-size:11px;padding:6px 10px">⌚ Send to Watch</button>
+            <button class="btn btn-garmin-remove" id="removeFromGarminBtn" onclick="removePlanFromGarmin()" style="font-size:11px;padding:6px 10px;display:none">⌚ Remove from Watch</button>
+            <button class="btn btn-danger" onclick="deleteCurrentPlan()" style="font-size:11px;padding:6px 10px">Delete</button>
+            <button class="chart-close-btn" onclick="closePlanView()">×</button>
+          </div>
+          <div id="pushToGarminStatus" style="font-size:11px;min-height:16px;text-align:right"></div>
         </div>
       </div>
       <div id="planViewContent" class="plan-view-content"></div>
