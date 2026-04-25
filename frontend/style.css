@@ -77,6 +77,70 @@ body {
 .btn-garmin-remove:hover { opacity: .88; }
 .btn-garmin-remove:disabled { opacity: .5; cursor: not-allowed; }
 
+.btn-logout {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: color .15s, border-color .15s;
+}
+.btn-logout:hover { color: var(--red); border-color: var(--red); }
+
+.logged-in-as { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+/* ---- Auth overlay ---- */
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 11, 16, 0.92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+}
+.auth-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 36px 32px;
+  width: 360px;
+  max-width: 95vw;
+  box-shadow: 0 24px 60px rgba(0,0,0,.5);
+}
+.auth-logo { display: flex; align-items: center; gap: 8px; margin-bottom: 24px; justify-content: center; }
+.auth-logo .logo-icon { font-size: 22px; }
+.auth-logo .logo-text { font-size: 18px; font-weight: 700; color: var(--text); }
+.auth-tabs { display: flex; margin-bottom: 24px; border-bottom: 1px solid var(--border); }
+.auth-tab {
+  flex: 1;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  padding: 8px 0;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+  margin-bottom: -1px;
+}
+.auth-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.auth-tab:hover:not(.active) { color: var(--text); }
+.auth-error {
+  background: rgba(239,68,68,.12);
+  color: var(--red);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+.auth-submit { width: 100%; margin-top: 4px; padding: 10px; font-size: 14px; }
+
 .sidebar-btn-row { display: flex; gap: 6px; }
 #garminBtn { flex: 1; }
 .btn-strava-icon {

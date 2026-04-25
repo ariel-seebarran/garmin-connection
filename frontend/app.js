@@ -10,17 +10,117 @@ let _chartInstance = null;
 let _currentMetric = null;
 let _currentDays = 30;
 
+// ---- Auth ----
+
+async function checkAuth() {
+  try {
+    const res = await fetch("/api/auth/me");
+    if (res.status === 401) {
+      showAuthOverlay();
+      return false;
+    }
+    const user = await res.json();
+    const el = document.getElementById("loggedInAs");
+    if (el) el.textContent = user.username;
+    window._currentUser = user;
+    return true;
+  } catch (_) {
+    showAuthOverlay();
+    return false;
+  }
+}
+
+function showAuthOverlay() {
+  const overlay = document.getElementById("authOverlay");
+  if (overlay) overlay.style.display = "flex";
+}
+
+function hideAuthOverlay() {
+  const overlay = document.getElementById("authOverlay");
+  if (overlay) overlay.style.display = "none";
+}
+
+function showAuthTab(tab) {
+  document.getElementById("loginForm").style.display = tab === "login" ? "" : "none";
+  document.getElementById("registerForm").style.display = tab === "register" ? "" : "none";
+  document.getElementById("loginTab").classList.toggle("active", tab === "login");
+  document.getElementById("registerTab").classList.toggle("active", tab === "register");
+}
+
+async function submitLogin() {
+  const username = document.getElementById("loginUsername").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errEl = document.getElementById("loginError");
+  errEl.style.display = "none";
+  if (!username || !password) { errEl.textContent = "Enter username and password."; errEl.style.display = ""; return; }
+  try {
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) { errEl.textContent = data.detail || "Login failed."; errEl.style.display = ""; return; }
+    window._currentUser = data;
+    const el = document.getElementById("loggedInAs");
+    if (el) el.textContent = data.username;
+    hideAuthOverlay();
+    initApp();
+  } catch (e) {
+    errEl.textContent = `Error: ${e.message}`;
+    errEl.style.display = "";
+  }
+}
+
+async function submitRegister() {
+  const username = document.getElementById("regUsername").value.trim();
+  const password = document.getElementById("regPassword").value;
+  const errEl = document.getElementById("registerError");
+  errEl.style.display = "none";
+  if (!username || !password) { errEl.textContent = "Fill in all fields."; errEl.style.display = ""; return; }
+  try {
+    const res = await fetch("/api/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) { errEl.textContent = data.detail || "Registration failed."; errEl.style.display = ""; return; }
+    window._currentUser = data;
+    const el = document.getElementById("loggedInAs");
+    if (el) el.textContent = data.username;
+    hideAuthOverlay();
+    initApp();
+  } catch (e) {
+    errEl.textContent = `Error: ${e.message}`;
+    errEl.style.display = "";
+  }
+}
+
+async function logout() {
+  await fetch("/api/auth/logout", { method: "POST" });
+  window._currentUser = null;
+  showAuthOverlay();
+  showAuthTab("login");
+}
+
 // ---- Init ----
-document.addEventListener("DOMContentLoaded", () => {
+
+function initApp() {
   loadStats();
   loadActivities();
   loadPlans();
   loadPerfData();
   initDataSource();
-  document.addEventListener("keydown", e => { if (e.key === "Escape") { closeChart(); closeActivityModal(); closeGarminModal(); closeStravaModal(); closePlanBuilder(); closePlanView(); } });
   initSidebarResize();
   initCardDrag();
   handleStravaCallback();
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  document.addEventListener("keydown", e => { if (e.key === "Escape") { closeChart(); closeActivityModal(); closeGarminModal(); closeStravaModal(); closePlanBuilder(); closePlanView(); } });
+  const authed = await checkAuth();
+  if (authed) initApp();
 });
 
 // ---- Stats ----
@@ -366,12 +466,29 @@ function scrollToBottom() {
 }
 
 // ---- Garmin Modal ----
-function openGarminModal() {
+async function openGarminModal() {
   document.getElementById("syncModal").classList.add("open");
   document.getElementById("syncStatus").textContent = "";
   document.getElementById("syncStatus").className = "sync-status";
   document.getElementById("mfaGroup").style.display = "none";
   document.getElementById("mfaCode").value = "";
+
+  // Pre-fill saved credentials
+  try {
+    const res = await fetch("/api/auth/me");
+    if (res.ok) {
+      const user = await res.json();
+      if (user.garmin_email) {
+        document.getElementById("garminEmail").value = user.garmin_email;
+      }
+      const pwField = document.getElementById("garminPassword");
+      if (user.garmin_saved) {
+        pwField.placeholder = "Saved — leave blank to use, or enter new password";
+      } else {
+        pwField.placeholder = "Garmin password";
+      }
+    }
+  } catch (_) {}
 }
 
 function closeGarminModal(e) {

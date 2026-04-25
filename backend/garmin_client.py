@@ -16,7 +16,12 @@ RUNNING_TYPES = {
 }
 ACTIVITIES_PAGE_SIZE = 100
 
-TOKENSTORE = Path(__file__).parent / ".garmin_tokens"
+TOKENSTORE_DIR = Path(__file__).parent / ".garmin_tokens"
+TOKENSTORE_DIR.mkdir(exist_ok=True)
+
+
+def _tokenstore(user_id: int) -> str:
+    return str(TOKENSTORE_DIR / str(user_id))
 
 
 class GarminSyncError(Exception):
@@ -27,7 +32,8 @@ class MFARequired(Exception):
     pass
 
 
-def _build_client(email: str, password: str, mfa_code: str | None = None) -> Garmin:
+def _build_client(email: str, password: str, mfa_code: str | None = None,
+                  tokenstore: str | None = None) -> Garmin:
     mfa_used = False
 
     def prompt_mfa():
@@ -39,17 +45,20 @@ def _build_client(email: str, password: str, mfa_code: str | None = None) -> Gar
 
     client = Garmin(email, password, is_cn=False, prompt_mfa=prompt_mfa)
     try:
-        client.login(tokenstore=str(TOKENSTORE))
+        client.login(tokenstore=tokenstore or str(TOKENSTORE_DIR / "0"))
     except MFARequired:
         raise
     return client
 
 
-async def sync_all(email: str, password: str, days: int = 30, mfa_code: str | None = None) -> dict:
-    log.info("Logging in to Garmin Connect (sync_all, days=%d)", days)
+async def sync_all(email: str, password: str, days: int = 30,
+                   mfa_code: str | None = None, user_id: int = 0) -> dict:
+    log.info("Logging in to Garmin Connect (sync_all, days=%d, user_id=%d)", days, user_id)
     loop = asyncio.get_event_loop()
     try:
-        client = await loop.run_in_executor(None, partial(_build_client, email, password, mfa_code))
+        client = await loop.run_in_executor(
+            None, partial(_build_client, email, password, mfa_code, _tokenstore(user_id))
+        )
     except MFARequired:
         raise GarminSyncError("MFA_REQUIRED")
     except GarminConnectAuthenticationError as e:
@@ -60,17 +69,20 @@ async def sync_all(email: str, password: str, days: int = 30, mfa_code: str | No
         raise GarminSyncError(f"Login error: {e}")
 
     results = {"activities": 0, "sleep_days": 0, "stats_days": 0, "training_metric_days": 0, "errors": []}
-    await _sync_activities(client, loop, days, results)
-    await _sync_daily_data(client, loop, days, results)
+    await _sync_activities(client, loop, days, results, user_id)
+    await _sync_daily_data(client, loop, days, results, user_id)
     return results
 
 
-async def sync_full_history(email: str, password: str, mfa_code: str | None = None) -> dict:
+async def sync_full_history(email: str, password: str,
+                            mfa_code: str | None = None, user_id: int = 0) -> dict:
     """Sync all activities ever recorded — paginated for large histories."""
-    log.info("Logging in to Garmin Connect (full history sync)")
+    log.info("Logging in to Garmin Connect (full history sync, user_id=%d)", user_id)
     loop = asyncio.get_event_loop()
     try:
-        client = await loop.run_in_executor(None, partial(_build_client, email, password, mfa_code))
+        client = await loop.run_in_executor(
+            None, partial(_build_client, email, password, mfa_code, _tokenstore(user_id))
+        )
     except MFARequired:
         raise GarminSyncError("MFA_REQUIRED")
     except GarminConnectAuthenticationError as e:
@@ -100,7 +112,7 @@ async def sync_full_history(email: str, password: str, mfa_code: str | None = No
             runs = dicts
 
         for activity in runs:
-            await database.upsert_activity(activity)
+            await database.upsert_activity(activity, user_id)
             results["activities"] += 1
 
         log.debug("Page %d: fetched %d activities (%d kept)", results["pages"], len(page), len(runs))
@@ -111,11 +123,11 @@ async def sync_full_history(email: str, password: str, mfa_code: str | None = No
 
     log.info("Activity pages fetched: %d, total activities stored: %d", results["pages"], results["activities"])
     # For full history, sync 90 days of daily data but only 30 days of biometrics
-    await _sync_daily_data(client, loop, 90, results, biometric_days=30)
+    await _sync_daily_data(client, loop, 90, results, user_id, biometric_days=30)
     return results
 
 
-async def _sync_activities(client: Garmin, loop, days: int, results: dict):
+async def _sync_activities(client: Garmin, loop, days: int, results: dict, user_id: int = 0):
     try:
         raw: list[dict] = await loop.run_in_executor(None, partial(client.get_activities, 0, min(days * 2, 200)))
         cutoff = (date.today() - timedelta(days=days)).isoformat()
@@ -125,18 +137,19 @@ async def _sync_activities(client: Garmin, loop, days: int, results: dict):
             runs = recent
 
         for activity in runs:
-            await database.upsert_activity(activity)
+            await database.upsert_activity(activity, user_id)
             results["activities"] += 1
     except Exception as e:
         results["errors"].append(f"Activities sync failed: {e}")
 
 
-async def _sync_daily_data(client: Garmin, loop, days: int, results: dict, biometric_days: int = 30):
+async def _sync_daily_data(client: Garmin, loop, days: int, results: dict,
+                           user_id: int = 0, biometric_days: int = 30):
     """Sync sleep, daily stats, biometrics, and performance metrics for each day."""
     today = date.today()
 
     # VO2 max and race predictions change slowly — fetch once for today
-    await _sync_vo2_and_races(client, loop, today.isoformat(), results)
+    await _sync_vo2_and_races(client, loop, today.isoformat(), results, user_id)
 
     for i in range(days):
         day = today - timedelta(days=i)
@@ -145,7 +158,7 @@ async def _sync_daily_data(client: Garmin, loop, days: int, results: dict, biome
         try:
             sleep = await loop.run_in_executor(None, partial(client.get_sleep_data, day_str))
             if sleep and sleep.get("dailySleepDTO"):
-                await database.upsert_sleep(day_str, sleep)
+                await database.upsert_sleep(day_str, sleep, user_id)
                 results["sleep_days"] += 1
         except Exception as e:
             results["errors"].append(f"Sleep {day_str}: {e}")
@@ -153,7 +166,7 @@ async def _sync_daily_data(client: Garmin, loop, days: int, results: dict, biome
         try:
             stats = await loop.run_in_executor(None, partial(client.get_stats, day_str))
             if stats:
-                await database.upsert_daily_stats(day_str, stats)
+                await database.upsert_daily_stats(day_str, stats, user_id)
                 results["stats_days"] += 1
         except Exception as e:
             results["errors"].append(f"Stats {day_str}: {e}")
@@ -166,7 +179,7 @@ async def _sync_daily_data(client: Garmin, loop, days: int, results: dict, biome
                     avg_spo2 = (spo2_data.get("averageSPO2") or spo2_data.get("avgSpo2")
                                 or spo2_data.get("averageSpo2"))
                     if avg_spo2:
-                        await database.update_daily_biometrics(day_str, spo2=float(avg_spo2))
+                        await database.update_daily_biometrics(day_str, user_id, spo2=float(avg_spo2))
             except Exception as e:
                 results["errors"].append(f"SpO2 {day_str}: {e}")
 
@@ -177,7 +190,7 @@ async def _sync_daily_data(client: Garmin, loop, days: int, results: dict, biome
                                 or resp_data.get("averageWakingRespirationValue")
                                 or resp_data.get("avgRespirationValue"))
                     if avg_resp:
-                        await database.update_daily_biometrics(day_str, respiration=float(avg_resp))
+                        await database.update_daily_biometrics(day_str, user_id, respiration=float(avg_resp))
             except Exception as e:
                 results["errors"].append(f"Respiration {day_str}: {e}")
 
@@ -186,7 +199,7 @@ async def _sync_daily_data(client: Garmin, loop, days: int, results: dict, biome
                 if isinstance(tr_data, list):
                     tr_data = tr_data[0] if tr_data else None
                 if tr_data:
-                    await database.upsert_training_readiness(day_str, tr_data)
+                    await database.upsert_training_readiness(day_str, tr_data, user_id)
                     results["training_metric_days"] += 1
             except Exception as e:
                 results["errors"].append(f"Training readiness {day_str}: {e}")
@@ -480,26 +493,23 @@ def _workout_json(name: str, description: str, steps: list) -> dict:
     }
 
 
-async def push_plan_to_garmin(plan: dict) -> dict:
+async def push_plan_to_garmin(plan: dict, email: str = "", password: str = "",
+                              user_id: int = 0) -> dict:
     """Upload every running workout in a training plan to the Garmin Connect calendar.
 
-    Requires a valid cached session from a previous sync (TOKENSTORE).
     Week 1 is anchored to the nearest Monday from today.
     """
-    if not TOKENSTORE.exists():
-        raise GarminSyncError(
-            "No saved Garmin session — sync Garmin first to create one."
-        )
-
+    ts = _tokenstore(user_id)
     loop = asyncio.get_event_loop()
-    email = os.environ.get("GARMIN_EMAIL", "")
-    password = os.environ.get("GARMIN_PASSWORD", "")
     try:
-        client = Garmin(email, password)
-        await loop.run_in_executor(None, partial(client.login, tokenstore=str(TOKENSTORE)))
+        client = await loop.run_in_executor(
+            None, partial(_build_client, email or os.environ.get("GARMIN_EMAIL", ""),
+                          password or os.environ.get("GARMIN_PASSWORD", ""),
+                          None, ts)
+        )
     except Exception as e:
         raise GarminSyncError(
-            f"Garmin session expired — re-sync Garmin to refresh it. ({e})"
+            f"Garmin login failed — re-sync Garmin to refresh your session. ({e})"
         )
 
     today = date.today()
@@ -545,21 +555,20 @@ async def push_plan_to_garmin(plan: dict) -> dict:
     return {"scheduled": scheduled, "errors": errors, "workout_ids": workout_ids}
 
 
-async def delete_plan_from_garmin(workout_ids: list[int]) -> dict:
+async def delete_plan_from_garmin(workout_ids: list[int], email: str = "",
+                                   password: str = "", user_id: int = 0) -> dict:
     """Delete previously pushed workouts from Garmin Connect (removes from calendar too)."""
     if not workout_ids:
         return {"deleted": 0, "errors": []}
-    if not TOKENSTORE.exists():
-        raise GarminSyncError(
-            "No saved Garmin session — sync Garmin first to create one."
-        )
 
+    ts = _tokenstore(user_id)
     loop = asyncio.get_event_loop()
-    email = os.environ.get("GARMIN_EMAIL", "")
-    password = os.environ.get("GARMIN_PASSWORD", "")
     try:
-        client = Garmin(email, password)
-        await loop.run_in_executor(None, partial(client.login, tokenstore=str(TOKENSTORE)))
+        client = await loop.run_in_executor(
+            None, partial(_build_client, email or os.environ.get("GARMIN_EMAIL", ""),
+                          password or os.environ.get("GARMIN_PASSWORD", ""),
+                          None, ts)
+        )
     except Exception as e:
         raise GarminSyncError(
             f"Garmin session expired — re-sync Garmin to refresh it. ({e})"
@@ -579,17 +588,17 @@ async def delete_plan_from_garmin(workout_ids: list[int]) -> dict:
     return {"deleted": deleted, "errors": errors}
 
 
-async def _sync_vo2_and_races(client: Garmin, loop, date_str: str, results: dict):
+async def _sync_vo2_and_races(client: Garmin, loop, date_str: str, results: dict, user_id: int = 0):
     # Race predictions
     try:
         preds = await loop.run_in_executor(None, client.get_race_predictions)
         if preds:
-            await database.upsert_race_predictions(date_str, preds)
+            await database.upsert_race_predictions(date_str, preds, user_id)
     except Exception as e:
         results["errors"].append(f"Race predictions: {e}")
 
     # VO2 max — extracted from activity records (vO2MaxValue field)
-    vo2_count = await database.sync_vo2_from_activities()
+    vo2_count = await database.sync_vo2_from_activities(user_id)
     if vo2_count:
         log.info("VO2 max populated from %d activity dates", vo2_count)
         results["vo2_dates"] = vo2_count

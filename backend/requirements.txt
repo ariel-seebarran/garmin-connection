@@ -8,3 +8,6 @@ chromadb>=0.5.23
 langchain-google-genai>=2.0.0
 langchain-core>=0.3.0
 langgraph>=0.2.0
+passlib[bcrypt]>=1.7.4
+python-jose[cryptography]>=3.3.0
+cryptography>=42.0.0

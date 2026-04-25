@@ -82,10 +82,14 @@ sudo -u "$APP_USER" "$APP_DIR/venv/bin/pip" install --quiet \
 info "Writing .env..."
 STRAVA_REDIRECT_URI="https://$DOMAIN/api/strava/callback"
 
+SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+
 sudo -u "$APP_USER" tee "$APP_DIR/app/.env" > /dev/null <<EOF
-# Garmin credentials (optional — friends enter these in the UI instead)
-GARMIN_EMAIL=
-GARMIN_PASSWORD=
+# Secret key for JWT session tokens and Garmin password encryption (auto-generated)
+SECRET_KEY=$SECRET_KEY
+
+# Set to true when running behind HTTPS (required in production)
+COOKIE_SECURE=true
 
 # Google API key (required)
 GOOGLE_API_KEY=$GOOGLE_API_KEY

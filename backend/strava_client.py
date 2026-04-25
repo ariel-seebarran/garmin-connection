@@ -47,8 +47,8 @@ async def exchange_code(client_id: str, client_secret: str, code: str) -> dict:
         return r.json()
 
 
-async def _get_valid_token(client_id: str, client_secret: str) -> str:
-    tokens = await database.get_strava_tokens()
+async def _get_valid_token(client_id: str, client_secret: str, user_id: int = 0) -> str:
+    tokens = await database.get_strava_tokens(user_id)
     if not tokens:
         raise ValueError("Strava not connected")
 
@@ -65,7 +65,7 @@ async def _get_valid_token(client_id: str, client_secret: str) -> str:
             data = r.json()
         await database.save_strava_tokens(
             data["access_token"], data["refresh_token"], data["expires_at"],
-            tokens.get("athlete_id"), tokens.get("athlete_name"),
+            tokens.get("athlete_id"), tokens.get("athlete_name"), user_id,
         )
         log.info("Strava token refreshed successfully")
         return data["access_token"]
@@ -73,9 +73,9 @@ async def _get_valid_token(client_id: str, client_secret: str) -> str:
     return tokens["access_token"]
 
 
-async def sync_activities(client_id: str, client_secret: str, days: int = 30) -> dict:
+async def sync_activities(client_id: str, client_secret: str, days: int = 30, user_id: int = 0) -> dict:
     log.info("Starting Strava sync: last %d days", days)
-    token = await _get_valid_token(client_id, client_secret)
+    token = await _get_valid_token(client_id, client_secret, user_id)
     after = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp())
 
     results = {"activities": 0, "errors": []}
@@ -104,7 +104,7 @@ async def sync_activities(client_id: str, client_secret: str, days: int = 30) ->
                 sport_type = act.get("sport_type") or act.get("type", "")
                 if sport_type in RUNNING_SPORT_TYPES:
                     try:
-                        await database.upsert_strava_activity(_map_activity(act))
+                        await database.upsert_strava_activity(_map_activity(act), user_id)
                         results["activities"] += 1
                     except Exception as e:
                         results["errors"].append(f"Activity {act.get('id')}: {e}")

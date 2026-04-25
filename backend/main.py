@@ -2,7 +2,6 @@ import os
 import sys
 from pathlib import Path
 
-# Ensure backend/ is on sys.path regardless of how the server is invoked
 sys.path.insert(0, str(Path(__file__).parent))
 
 from collections import defaultdict
@@ -10,12 +9,13 @@ from contextlib import asynccontextmanager
 from datetime import date, timedelta
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import auth
 import database
 import garmin_client
 import strava_client
@@ -27,6 +27,8 @@ from logging_config import setup_logging, get_logger
 load_dotenv(Path(__file__).parent.parent / ".env")
 setup_logging()
 log = get_logger("main")
+
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"
 
 
 @asynccontextmanager
@@ -45,6 +47,7 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_credentials=True,
 )
 
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
@@ -76,29 +79,125 @@ class PlanRequest(BaseModel):
     plan_type: str = "pace"
 
 
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+# ---------------------------------------------------------------------------
+# Auth endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/api/auth/register")
+async def register(req: RegisterRequest, response: Response):
+    if len(req.username.strip()) < 3:
+        raise HTTPException(400, "Username must be at least 3 characters.")
+    if len(req.password) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters.")
+
+    existing = await database.get_user_by_username(req.username)
+    if existing:
+        raise HTTPException(409, "Username already taken.")
+
+    hashed = auth.hash_password(req.password)
+    user_id = await database.create_user(req.username.strip(), hashed)
+
+    token = auth.create_token(user_id)
+    response.set_cookie(
+        key="session", value=token, httponly=True,
+        samesite="lax", secure=COOKIE_SECURE, max_age=60 * 60 * 24 * 30,
+    )
+    log.info("New user registered: id=%d username=%r", user_id, req.username)
+    return {"id": user_id, "username": req.username.strip()}
+
+
+@app.post("/api/auth/login")
+async def login(req: LoginRequest, response: Response):
+    user = await database.get_user_by_username(req.username)
+    if not user or not auth.verify_password(req.password, user["hashed_password"]):
+        raise HTTPException(401, "Invalid username or password.")
+
+    token = auth.create_token(user["id"])
+    response.set_cookie(
+        key="session", value=token, httponly=True,
+        samesite="lax", secure=COOKIE_SECURE, max_age=60 * 60 * 24 * 30,
+    )
+    log.info("User logged in: id=%d username=%r", user["id"], user["username"])
+    return {"id": user["id"], "username": user["username"]}
+
+
+@app.post("/api/auth/logout")
+async def logout(response: Response):
+    response.delete_cookie(key="session", samesite="lax", secure=COOKIE_SECURE)
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+async def me(user_id: int = Depends(auth.get_current_user)):
+    user = await database.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(404, "User not found")
+    return {
+        "id": user["id"],
+        "username": user["username"],
+        "garmin_email": user.get("garmin_email"),
+        "garmin_saved": bool(user.get("garmin_password_enc")),
+    }
+
+
 # ---------------------------------------------------------------------------
 # API routes
 # ---------------------------------------------------------------------------
 
 @app.post("/api/sync")
-async def sync_garmin(req: SyncRequest):
-    email = req.email or os.getenv("GARMIN_EMAIL")
-    password = req.password or os.getenv("GARMIN_PASSWORD")
+async def sync_garmin(req: SyncRequest, user_id: int = Depends(auth.get_current_user)):
+    email = req.email
+    password = req.password
+
+    # Try stored credentials if not provided in request
+    if not email or not password:
+        stored = await database.get_garmin_credentials(user_id)
+        if stored:
+            stored_email, stored_enc = stored
+            if not email:
+                email = stored_email
+            if not password:
+                try:
+                    password = auth.decrypt_garmin_password(stored_enc)
+                except Exception:
+                    pass
+
+    # Fall back to env vars
+    if not email:
+        email = os.getenv("GARMIN_EMAIL")
+    if not password:
+        password = os.getenv("GARMIN_PASSWORD")
 
     if not email or not password:
         raise HTTPException(
             400,
-            "Garmin credentials required. Set GARMIN_EMAIL/GARMIN_PASSWORD in .env or pass in request.",
+            "Garmin credentials required. Enter them below or save them to your account.",
         )
 
+    # Save new credentials if provided explicitly in request
+    if req.email and req.password:
+        enc = auth.encrypt_garmin_password(req.password)
+        await database.update_garmin_credentials(user_id, req.email, enc)
+        log.info("Saved Garmin credentials for user_id=%d", user_id)
+
     mode = "full history" if req.full_history else f"last {req.days} days"
-    log.info("Sync started: %s (mfa=%s)", mode, bool(req.mfa_code))
+    log.info("Sync started: %s (mfa=%s, user_id=%d)", mode, bool(req.mfa_code), user_id)
 
     try:
         if req.full_history:
-            results = await garmin_client.sync_full_history(email, password, req.mfa_code)
+            results = await garmin_client.sync_full_history(email, password, req.mfa_code, user_id)
         else:
-            results = await garmin_client.sync_all(email, password, req.days, req.mfa_code)
+            results = await garmin_client.sync_all(email, password, req.days, req.mfa_code, user_id)
     except garmin_client.GarminSyncError as e:
         log.warning("Sync failed: %s", e)
         code = 449 if str(e) == "MFA_REQUIRED" else 401
@@ -108,16 +207,14 @@ async def sync_garmin(req: SyncRequest):
              results["activities"], results["sleep_days"], results["stats_days"],
              len(results.get("errors", [])))
 
-    # Re-index vector store after sync
     indexed = await vector_store.index_all_activities()
     log.info("Vector store indexed: %d activities", indexed)
 
     await database.log_sync(
-        results["activities"],
-        results["sleep_days"],
-        results["stats_days"],
+        results["activities"], results["sleep_days"], results["stats_days"],
         "success" if not results["errors"] else "partial",
         "; ".join(results["errors"]) if results["errors"] else None,
+        user_id,
     )
 
     return {
@@ -128,26 +225,24 @@ async def sync_garmin(req: SyncRequest):
 
 
 @app.post("/api/index")
-async def reindex():
-    """Re-embed all activities into ChromaDB without re-syncing from Garmin."""
+async def reindex(user_id: int = Depends(auth.get_current_user)):
     indexed = await vector_store.index_all_activities()
     return {"indexed": indexed}
 
 
 @app.post("/api/backfill-vo2")
-async def backfill_vo2():
-    """Populate VO2 max in training_metrics from vO2MaxValue stored in activity records."""
-    count = await database.sync_vo2_from_activities()
+async def backfill_vo2(user_id: int = Depends(auth.get_current_user)):
+    count = await database.sync_vo2_from_activities(user_id)
     return {"vo2_dates_populated": count}
 
 
 @app.post("/api/chat")
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, user_id: int = Depends(auth.get_current_user)):
     if not os.getenv("GOOGLE_API_KEY"):
         raise HTTPException(500, "GOOGLE_API_KEY not set in .env")
 
     n = len(req.messages)
-    log.info("Chat request: %d message(s), goal=%r", n, req.goal)
+    log.info("Chat request: %d message(s), goal=%r, user_id=%d", n, req.goal, user_id)
 
     async def event_stream():
         async for chunk in agent.stream_chat(req.messages, req.goal):
@@ -157,13 +252,13 @@ async def chat(req: ChatRequest):
 
 
 @app.get("/api/stats")
-async def get_stats():
-    activities = await database.get_recent_activities(30)
-    sleep = await database.get_recent_sleep(7)
-    daily = await database.get_recent_daily_stats(7)
-    last_sync = await database.get_last_sync()
+async def get_stats(user_id: int = Depends(auth.get_current_user)):
+    activities = await database.get_recent_activities(30, user_id)
+    sleep = await database.get_recent_sleep(7, user_id)
+    daily = await database.get_recent_daily_stats(7, user_id)
+    last_sync = await database.get_last_sync(user_id)
     indexed = await vector_store.get_indexed_count()
-    training_metrics = await database.get_recent_training_metrics(days=30)
+    training_metrics = await database.get_recent_training_metrics(days=30, user_id=user_id)
 
     total_distance = sum(a["distance_meters"] or 0 for a in activities) / 1000
     cutoff = (date.today() - timedelta(days=7)).isoformat()
@@ -190,7 +285,6 @@ async def get_stats():
     latest_tr = next((m for m in training_metrics if m.get("training_readiness_score")), None)
     latest_vo2 = next((m for m in training_metrics if m.get("vo2_max")), None)
 
-    # Steps: use today's value if available, otherwise fall back to most recent day with data
     steps_today = None
     steps_date = None
     today_str = date.today().isoformat()
@@ -226,16 +320,16 @@ async def get_stats():
 
 
 @app.get("/api/activities/{activity_id}")
-async def activity_detail(activity_id: str):
-    activity = await database.get_activity_detail(activity_id)
+async def activity_detail(activity_id: str, user_id: int = Depends(auth.get_current_user)):
+    activity = await database.get_activity_detail(activity_id, user_id)
     if not activity:
         raise HTTPException(404, "Activity not found")
     return activity
 
 
 @app.get("/api/activities")
-async def get_activities(limit: int = 20):
-    rows = await database.get_recent_activities(limit)
+async def get_activities(limit: int = 20, user_id: int = Depends(auth.get_current_user)):
+    rows = await database.get_recent_activities(limit, user_id)
     out = []
     for a in rows:
         p = a["avg_pace_per_km"]
@@ -261,33 +355,33 @@ async def get_activities(limit: int = 20):
 
 
 @app.get("/api/chart-data")
-async def get_chart_data(metric: str, days: int = 30):
+async def get_chart_data(metric: str, days: int = 30, user_id: int = Depends(auth.get_current_user)):
     if metric == "sleep_score":
-        rows = await database.get_recent_sleep(days=days)
+        rows = await database.get_recent_sleep(days=days, user_id=user_id)
         data = [{"date": r["date"], "value": r["sleep_score"]}
                 for r in reversed(rows) if r["sleep_score"] is not None]
         return {"data": data, "unit": "/100", "title": "Sleep Score"}
 
     elif metric == "hrv":
-        rows = await database.get_recent_sleep(days=days)
+        rows = await database.get_recent_sleep(days=days, user_id=user_id)
         data = [{"date": r["date"], "value": round(r["avg_hrv"], 1)}
                 for r in reversed(rows) if r["avg_hrv"] is not None]
         return {"data": data, "unit": "ms", "title": "HRV"}
 
     elif metric == "resting_hr":
-        rows = await database.get_recent_daily_stats(days=days)
+        rows = await database.get_recent_daily_stats(days=days, user_id=user_id)
         data = [{"date": r["date"], "value": r["resting_heart_rate"]}
                 for r in reversed(rows) if r["resting_heart_rate"] is not None]
         return {"data": data, "unit": "bpm", "title": "Resting Heart Rate", "lower_is_better": True}
 
     elif metric == "steps":
-        rows = await database.get_recent_daily_stats(days=days)
+        rows = await database.get_recent_daily_stats(days=days, user_id=user_id)
         data = [{"date": r["date"], "value": r["steps"]}
                 for r in reversed(rows) if r.get("steps")]
         return {"data": data, "unit": "steps", "title": "Daily Steps"}
 
     elif metric == "intensity_minutes":
-        rows = await database.get_recent_daily_stats(days=days)
+        rows = await database.get_recent_daily_stats(days=days, user_id=user_id)
         data = []
         for r in reversed(rows):
             v = (r.get("intensity_minutes_moderate") or 0) + (r.get("intensity_minutes_vigorous") or 0)
@@ -296,19 +390,19 @@ async def get_chart_data(metric: str, days: int = 30):
         return {"data": data, "unit": "min", "title": "Intensity Minutes"}
 
     elif metric == "training_readiness":
-        rows = await database.get_recent_training_metrics(days=days)
+        rows = await database.get_recent_training_metrics(days=days, user_id=user_id)
         data = [{"date": r["date"], "value": r["training_readiness_score"]}
                 for r in reversed(rows) if r["training_readiness_score"] is not None]
         return {"data": data, "unit": "/100", "title": "Training Readiness"}
 
     elif metric == "vo2_max":
-        rows = await database.get_recent_training_metrics(days=days)
+        rows = await database.get_recent_training_metrics(days=days, user_id=user_id)
         data = [{"date": r["date"], "value": round(r["vo2_max"], 1)}
                 for r in reversed(rows) if r["vo2_max"] is not None]
         return {"data": data, "unit": "ml/kg/min", "title": "VO2 Max"}
 
     elif metric == "daily_distance":
-        rows = await database.get_recent_activities(limit=max(days * 3, 500))
+        rows = await database.get_recent_activities(limit=max(days * 3, 500), user_id=user_id)
         cutoff = (date.today() - timedelta(days=days)).isoformat()
         daily: dict[str, float] = defaultdict(float)
         for a in rows:
@@ -319,7 +413,7 @@ async def get_chart_data(metric: str, days: int = 30):
         return {"data": data, "unit": "km", "title": "Daily Distance"}
 
     elif metric == "weekly_distance":
-        rows = await database.get_recent_activities(limit=9999)
+        rows = await database.get_recent_activities(limit=9999, user_id=user_id)
         today = date.today()
         weekly: dict[str, float] = {}
         for i in range(min(days // 7 + 1, 104)):
@@ -340,7 +434,7 @@ async def get_chart_data(metric: str, days: int = 30):
         return {"data": data, "unit": "km", "title": "Weekly Distance"}
 
     elif metric == "pace":
-        rows = await database.get_recent_activities(limit=max(days * 3, 500))
+        rows = await database.get_recent_activities(limit=max(days * 3, 500), user_id=user_id)
         cutoff = (date.today() - timedelta(days=days)).isoformat()
         data = [
             {"date": (a.get("start_time") or "")[:10], "value": round(a["avg_pace_per_km"], 2)}
@@ -354,8 +448,8 @@ async def get_chart_data(metric: str, days: int = 30):
 
 
 @app.get("/api/performance")
-async def get_performance():
-    data = await database.get_performance_data()
+async def get_performance(user_id: int = Depends(auth.get_current_user)):
+    data = await database.get_performance_data(user_id)
 
     def fmt_time(secs):
         if not secs:
@@ -379,15 +473,15 @@ async def get_performance():
 
 
 @app.get("/api/strava/status")
-async def strava_status():
-    tokens = await database.get_strava_tokens()
+async def strava_status(user_id: int = Depends(auth.get_current_user)):
+    tokens = await database.get_strava_tokens(user_id)
     if not tokens:
         return {"connected": False}
     return {"connected": True, "athlete_name": tokens.get("athlete_name"), "athlete_id": tokens.get("athlete_id")}
 
 
 @app.get("/api/strava/auth")
-async def strava_auth():
+async def strava_auth(user_id: int = Depends(auth.get_current_user)):
     client_id = os.getenv("STRAVA_CLIENT_ID")
     if not client_id:
         raise HTTPException(400, "STRAVA_CLIENT_ID not set in .env")
@@ -396,7 +490,8 @@ async def strava_auth():
 
 
 @app.get("/api/strava/callback")
-async def strava_callback(code: str | None = None, error: str | None = None):
+async def strava_callback(code: str | None = None, error: str | None = None,
+                           user_id: int = Depends(auth.get_current_user)):
     if error or not code:
         log.warning("Strava OAuth error: %s", error)
         return RedirectResponse("/?strava_error=1")
@@ -413,8 +508,9 @@ async def strava_callback(code: str | None = None, error: str | None = None):
             data["access_token"], data["refresh_token"], data["expires_at"],
             athlete.get("id"),
             f"{athlete.get('firstname', '')} {athlete.get('lastname', '')}".strip() or None,
+            user_id,
         )
-        log.info("Strava connected: athlete_id=%s", athlete.get("id"))
+        log.info("Strava connected: athlete_id=%s user_id=%d", athlete.get("id"), user_id)
     except Exception as e:
         log.error("Strava OAuth token exchange failed: %s", e)
         return RedirectResponse("/?strava_error=1")
@@ -423,14 +519,14 @@ async def strava_callback(code: str | None = None, error: str | None = None):
 
 
 @app.post("/api/strava/sync")
-async def strava_sync(days: int = 30):
+async def strava_sync(days: int = 30, user_id: int = Depends(auth.get_current_user)):
     client_id = os.getenv("STRAVA_CLIENT_ID")
     client_secret = os.getenv("STRAVA_CLIENT_SECRET")
     if not client_id or not client_secret:
         raise HTTPException(400, "STRAVA_CLIENT_ID / STRAVA_CLIENT_SECRET not set in .env")
 
     try:
-        results = await strava_client.sync_activities(client_id, client_secret, days)
+        results = await strava_client.sync_activities(client_id, client_secret, days, user_id)
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
@@ -443,7 +539,8 @@ async def strava_sync(days: int = 30):
 
 
 @app.get("/api/search")
-async def search(q: str, n: int = 8, year: int | None = None):
+async def search(q: str, n: int = 8, year: int | None = None,
+                  user_id: int = Depends(auth.get_current_user)):
     hits = await vector_store.search_activities(q, n_results=n, year=year)
     return {"results": hits}
 
@@ -483,7 +580,7 @@ def _fitness_context(activities: list[dict], stats: list[dict]) -> str:
 
 
 @app.post("/api/plans")
-async def create_plan(req: PlanRequest):
+async def create_plan(req: PlanRequest, user_id: int = Depends(auth.get_current_user)):
     if not os.getenv("GOOGLE_API_KEY"):
         raise HTTPException(500, "GOOGLE_API_KEY not set in .env")
 
@@ -500,8 +597,8 @@ async def create_plan(req: PlanRequest):
         except ValueError:
             raise HTTPException(400, "Invalid race date format.")
 
-    activities = await database.get_recent_activities(limit=20)
-    stats = await database.get_recent_daily_stats(days=7)
+    activities = await database.get_recent_activities(limit=20, user_id=user_id)
+    stats = await database.get_recent_daily_stats(days=7, user_id=user_id)
     context = _fitness_context(activities, stats)
 
     try:
@@ -525,56 +622,77 @@ async def create_plan(req: PlanRequest):
         weekly_days=req.days_per_week,
         current_weekly_km=req.current_weekly_km,
         plan=plan,
+        user_id=user_id,
     )
-    log.info("Plan saved: id=%d title=%r", plan_id, plan.get("title"))
+    log.info("Plan saved: id=%d title=%r user_id=%d", plan_id, plan.get("title"), user_id)
     return {"id": plan_id, "plan": plan}
 
 
 @app.get("/api/plans")
-async def list_plans():
-    plans = await database.get_training_plans()
+async def list_plans(user_id: int = Depends(auth.get_current_user)):
+    plans = await database.get_training_plans(user_id)
     return {"plans": plans}
 
 
 @app.get("/api/plans/{plan_id}")
-async def get_plan(plan_id: int):
-    plan = await database.get_training_plan(plan_id)
+async def get_plan(plan_id: int, user_id: int = Depends(auth.get_current_user)):
+    plan = await database.get_training_plan(plan_id, user_id)
     if not plan:
         raise HTTPException(404, "Plan not found")
     return plan
 
 
 @app.delete("/api/plans/{plan_id}")
-async def delete_plan(plan_id: int):
-    deleted = await database.delete_training_plan(plan_id)
+async def delete_plan(plan_id: int, user_id: int = Depends(auth.get_current_user)):
+    deleted = await database.delete_training_plan(plan_id, user_id)
     if not deleted:
         raise HTTPException(404, "Plan not found")
     return {"deleted": plan_id}
 
 
 @app.post("/api/plans/{plan_id}/push-to-garmin")
-async def push_plan_to_garmin(plan_id: int):
-    plan_data = await database.get_training_plan(plan_id)
+async def push_plan_to_garmin(plan_id: int, user_id: int = Depends(auth.get_current_user)):
+    plan_data = await database.get_training_plan(plan_id, user_id)
     if not plan_data:
         raise HTTPException(404, "Plan not found")
+
+    email = password = ""
+    stored = await database.get_garmin_credentials(user_id)
+    if stored:
+        email = stored[0]
+        try:
+            password = auth.decrypt_garmin_password(stored[1])
+        except Exception:
+            pass
+
     try:
-        result = await garmin_client.push_plan_to_garmin(plan_data["plan"])
+        result = await garmin_client.push_plan_to_garmin(plan_data["plan"], email, password, user_id)
         if result.get("workout_ids"):
-            await database.store_garmin_workout_ids(plan_id, result["workout_ids"])
+            await database.store_garmin_workout_ids(plan_id, result["workout_ids"], user_id)
         return result
     except garmin_client.GarminSyncError as e:
         raise HTTPException(400, str(e))
 
 
 @app.delete("/api/plans/{plan_id}/garmin-workouts")
-async def delete_plan_from_garmin(plan_id: int):
-    workout_ids = await database.get_garmin_workout_ids(plan_id)
+async def delete_plan_from_garmin(plan_id: int, user_id: int = Depends(auth.get_current_user)):
+    workout_ids = await database.get_garmin_workout_ids(plan_id, user_id)
     if not workout_ids:
         raise HTTPException(404, "No Garmin workouts found for this plan — push to Garmin first")
+
+    email = password = ""
+    stored = await database.get_garmin_credentials(user_id)
+    if stored:
+        email = stored[0]
+        try:
+            password = auth.decrypt_garmin_password(stored[1])
+        except Exception:
+            pass
+
     try:
-        result = await garmin_client.delete_plan_from_garmin(workout_ids)
+        result = await garmin_client.delete_plan_from_garmin(workout_ids, email, password, user_id)
         if result["deleted"] > 0:
-            await database.store_garmin_workout_ids(plan_id, [])
+            await database.store_garmin_workout_ids(plan_id, [], user_id)
         return result
     except garmin_client.GarminSyncError as e:
         raise HTTPException(400, str(e))
