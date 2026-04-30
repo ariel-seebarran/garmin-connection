@@ -218,7 +218,7 @@ async function loadActivities() {
 function renderActivities(activities) {
   const list = document.getElementById("activityList");
   if (!activities.length) {
-    list.innerHTML = '<div class="empty-state">Sync your Garmin data to see activities</div>';
+    list.innerHTML = '<div class="empty-state">Sync your Garmin or Strava data to see activities</div>';
     return;
   }
   list.innerHTML = activities.map(a => `
