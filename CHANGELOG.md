@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-04-30
+
+### Added
+- **Full GPS route on activity maps** — `_fetch_and_store_polyline` calls `get_activity_details(maxpoly=300)` after each Garmin activity upsert and stores the coordinate array in a new `activities.polyline` column. Re-sync to populate routes for recent runs.
+
+### Changed
+- `GET /api/activities/{id}/map` now checks `activities.polyline` first, then falls back to Strava `summary_polyline`, then start-point marker
+- Database migration adds `polyline TEXT` column to existing `activities` tables
+
 ## [0.5.0] — 2026-04-30
 
 ### Added
