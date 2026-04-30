@@ -29,8 +29,9 @@ cp .env.example .env
 # Edit .env — set GOOGLE_API_KEY at minimum
 
 # 4. Run
-python backend/main.py
-# Opens http://localhost:8000
+python backend/main.py      # Windows
+python3 backend/main.py     # Mac/Linux
+# Opens http://localhost:8000 automatically
 ```
 
 **First run:**
@@ -70,6 +71,50 @@ The script installs everything, sets up nginx + HTTPS (Let's Encrypt), and start
 ```bash
 sudo -u coachclaude git -C /opt/coach-claude/app pull && sudo systemctl restart coach-claude
 ```
+
+---
+
+---
+
+## MCP Server (use from Claude Code)
+
+The MCP server lets you query your running data directly from Claude Code in your IDE — no browser needed.
+
+**Setup:** add to `~/.claude/mcp_servers.json`:
+
+```json
+{
+  "garmin-coach": {
+    "command": "C:/Users/ariel/Dev/garmin-connection/.venv/Scripts/python.exe",
+    "args": ["C:/Users/ariel/Dev/garmin-connection/mcp_server/server.py"]
+  }
+}
+```
+
+Or via the Claude Code CLI:
+```bash
+claude mcp add garmin-coach \
+  .venv/Scripts/python.exe mcp_server/server.py
+```
+
+The MCP server reads your local SQLite + ChromaDB directly — no HTTP server needed.
+
+**Available tools:**
+
+| Tool | Example prompt |
+|------|---------------|
+| `search_runs` | "Find my long runs from last summer" |
+| `get_recent_training` | "What have I done in the last 4 weeks?" |
+| `get_personal_records` | "What's my 10K PR?" |
+| `get_recovery_status` | "How recovered am I based on HRV and sleep?" |
+| `get_weekly_volume` | "Show my mileage trend over the last 3 months" |
+| `compare_periods` | "Compare this April to last April" |
+
+---
+
+## Architecture
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for a full system diagram, data flow, and file map.
 
 ---
 
