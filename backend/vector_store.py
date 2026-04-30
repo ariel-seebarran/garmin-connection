@@ -19,7 +19,7 @@ import database
 CHROMA_PATH = Path(__file__).parent / "chroma_db"
 COLLECTION_NAME = "running_activities"
 
-_client: chromadb.PersistentClient | None = None
+_client = None
 _collection = None
 
 

@@ -81,7 +81,7 @@ STRAVA_REDIRECT_URI="https://$DOMAIN/api/strava/callback"
 
 SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
 
-sudo -u "$APP_USER" tee "$APP_DIR/app/.env" > /dev/null <<EOF
+sudo tee "$APP_DIR/app/.env" > /dev/null <<EOF
 # Secret key for JWT session tokens and Garmin password encryption (auto-generated)
 SECRET_KEY=$SECRET_KEY
 
@@ -97,7 +97,7 @@ STRAVA_CLIENT_SECRET=
 STRAVA_REDIRECT_URI=$STRAVA_REDIRECT_URI
 EOF
 
-chmod 600 "$APP_DIR/app/.env"
+sudo chmod 600 "$APP_DIR/app/.env"
 info ".env written. Edit $APP_DIR/app/.env later to add Strava credentials."
 
 # ---------------------------------------------------------------------------
