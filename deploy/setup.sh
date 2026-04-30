@@ -27,9 +27,6 @@ DOMAIN="$REPLY"
 confirm "Google API key:"
 GOOGLE_API_KEY="$REPLY"
 
-confirm "Password for friends to log in:"
-HTPASSWD_PASS="$REPLY"
-
 confirm "Your GitHub repo URL (e.g. https://github.com/YOU/garmin-connection):"
 GITHUB_REPO="$REPLY"
 
@@ -48,7 +45,7 @@ sudo apt-get update -qq
 sudo apt-get install -y -qq \
     python3.11 python3.11-venv python3-pip \
     nginx certbot python3-certbot-nginx \
-    apache2-utils git iptables-persistent
+    git iptables-persistent
 
 # ---------------------------------------------------------------------------
 # 2. App user & directory
@@ -116,16 +113,7 @@ sudo systemctl start coach-claude
 info "Service started."
 
 # ---------------------------------------------------------------------------
-# 7. Basic auth password file
-# ---------------------------------------------------------------------------
-info "Creating basic auth password file..."
-sudo htpasswd -cb /etc/nginx/.htpasswd coach "$HTPASSWD_PASS"
-sudo chmod 640 /etc/nginx/.htpasswd
-sudo chown root:www-data /etc/nginx/.htpasswd
-info "Password set. Username is 'coach', password is what you just entered."
-
-# ---------------------------------------------------------------------------
-# 8. Nginx config
+# 7. Nginx config
 # ---------------------------------------------------------------------------
 info "Configuring nginx..."
 sudo cp "$APP_DIR/app/deploy/nginx.conf" /etc/nginx/sites-available/coach-claude
@@ -161,8 +149,7 @@ echo ""
 echo -e "${GREEN}=== Setup complete! ===${NC}"
 echo ""
 echo "  App URL:  https://$DOMAIN"
-echo "  Username: coach"
-echo "  Password: (what you entered)"
+echo "  Register your account at https://$DOMAIN to get started."
 echo ""
 echo "Useful commands:"
 echo "  sudo systemctl status coach-claude   # check if app is running"
