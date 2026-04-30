@@ -1106,19 +1106,46 @@ function saveCardOrder() {
 // ---- Activity Detail Modal ----
 
 let _currentActivity = null;
+let _activityMap = null;
 
 async function openActivityModal(activityId) {
   document.getElementById("activityModal").classList.add("open");
   document.getElementById("actDetailGrid").innerHTML =
     '<div style="color:var(--text-muted);padding:20px;text-align:center;grid-column:1/-1">Loading…</div>';
+  document.getElementById("actDetailMap").style.display = "none";
+
   try {
-    const res = await fetch(`/api/activities/${activityId}`);
-    if (!res.ok) throw new Error("Not found");
-    _currentActivity = await res.json();
+    const [detailRes, mapRes] = await Promise.all([
+      fetch(`/api/activities/${activityId}`),
+      fetch(`/api/activities/${activityId}/map`),
+    ]);
+    if (!detailRes.ok) throw new Error("Not found");
+    _currentActivity = await detailRes.json();
     renderActivityDetail(_currentActivity);
+    if (mapRes.ok) renderActivityMap(await mapRes.json());
   } catch (e) {
     document.getElementById("actDetailGrid").innerHTML =
       `<div style="color:var(--red);padding:20px;grid-column:1/-1">Error loading activity: ${e.message}</div>`;
+  }
+}
+
+function renderActivityMap(mapData) {
+  if (!mapData.coords || !mapData.coords.length || mapData.type === "none") return;
+  const el = document.getElementById("actDetailMap");
+  el.style.display = "block";
+  if (_activityMap) { _activityMap.remove(); _activityMap = null; }
+  el.innerHTML = "";
+  const map = L.map(el, { zoomControl: true, attributionControl: false });
+  _activityMap = map;
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+  if (mapData.type === "route" && mapData.coords.length > 1) {
+    const line = L.polyline(mapData.coords, { color: "#4f9cf9", weight: 3, opacity: 0.9 }).addTo(map);
+    L.circleMarker(mapData.coords[0], { radius: 6, color: "#4caf50", fillColor: "#4caf50", fillOpacity: 1 }).addTo(map);
+    L.circleMarker(mapData.coords[mapData.coords.length - 1], { radius: 6, color: "#f44336", fillColor: "#f44336", fillOpacity: 1 }).addTo(map);
+    map.fitBounds(line.getBounds(), { padding: [16, 16] });
+  } else {
+    map.setView(mapData.coords[0], 14);
+    L.marker(mapData.coords[0]).addTo(map);
   }
 }
 
@@ -1126,6 +1153,7 @@ function closeActivityModal(e) {
   if (!e || e.target === document.getElementById("activityModal")) {
     document.getElementById("activityModal").classList.remove("open");
     _currentActivity = null;
+    if (_activityMap) { _activityMap.remove(); _activityMap = null; }
   }
 }
 

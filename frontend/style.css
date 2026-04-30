@@ -821,6 +821,13 @@ body.strava-only .stat-card[data-garmin-only="true"] { display: none; }
 .act-detail-row:last-child { border-bottom: none; }
 .act-detail-label { font-size: 11px; color: var(--text-muted); }
 .act-detail-value { font-size: 12px; font-weight: 600; color: var(--text); }
+.activity-map {
+  height: 220px;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+}
 .activity-modal-actions {
   border-top: 1px solid var(--border);
   padding-top: 16px;

@@ -330,6 +330,7 @@
         </div>
         <button class="chart-close-btn" onclick="closeActivityModal()">×</button>
       </div>
+      <div id="actDetailMap" class="activity-map" style="display:none"></div>
       <div class="activity-detail-grid" id="actDetailGrid">
         <div style="color:var(--text-muted);padding:20px;text-align:center;grid-column:1/-1">Loading…</div>
       </div>
@@ -456,6 +457,8 @@
       cb.addEventListener("change", () => { dg.style.display = cb.checked ? "none" : ""; });
     });
   </script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="app.js"></script>
 </body>

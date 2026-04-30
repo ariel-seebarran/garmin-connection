@@ -699,6 +699,51 @@ async def delete_plan_from_garmin(plan_id: int, user_id: int = Depends(auth.get_
 
 
 # ---------------------------------------------------------------------------
+# Activity map (route polyline)
+# ---------------------------------------------------------------------------
+
+def _decode_polyline(encoded: str) -> list[list[float]]:
+    coords, index, lat, lon = [], 0, 0, 0
+    while index < len(encoded):
+        for is_lon in (False, True):
+            shift = result = 0
+            while True:
+                b = ord(encoded[index]) - 63
+                index += 1
+                result |= (b & 0x1F) << shift
+                shift += 5
+                if b < 0x20:
+                    break
+            delta = ~(result >> 1) if result & 1 else result >> 1
+            if is_lon:
+                lon += delta
+            else:
+                lat += delta
+        coords.append([lat / 1e5, lon / 1e5])
+    return coords
+
+
+@app.get("/api/activities/{activity_id}/map")
+async def activity_map(activity_id: str, user_id: int = Depends(auth.get_current_user)):
+    activity = await database.get_activity_detail(activity_id, user_id)
+    if not activity:
+        raise HTTPException(404, "Activity not found")
+    raw = activity.get("raw_data", {})
+
+    if activity_id.startswith("strava_"):
+        polyline = (raw.get("map") or {}).get("summary_polyline")
+        if polyline:
+            return {"type": "route", "coords": _decode_polyline(polyline)}
+
+    lat = raw.get("startLatitude") or raw.get("start_latitude")
+    lon = raw.get("startLongitude") or raw.get("start_longitude")
+    if lat and lon:
+        return {"type": "point", "coords": [[lat, lon]]}
+
+    return {"type": "none", "coords": []}
+
+
+# ---------------------------------------------------------------------------
 # Data export / import (push local Garmin data to cloud)
 # ---------------------------------------------------------------------------
 
