@@ -7,6 +7,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-04-30
+
+### Added
+- **Multi-user auth** — JWT httpOnly cookies, open registration, bcrypt password hashing. All data endpoints require authentication; every DB table keyed by `user_id`
+- **Per-user Garmin credential storage** — passwords encrypted with AES-128 (Fernet) derived from `SECRET_KEY`; stored in `users` table so each user's Garmin account is independent
+- **Per-user Strava tokens** — `strava_tokens` table changed from a singleton to `user_id PRIMARY KEY`
+- **`/api/auth/register`, `/api/auth/login`, `/api/auth/logout`, `/api/auth/me`** endpoints
+- **Login / register overlay** — full-screen auth card with tab toggle, shown on first load if unauthenticated; logout button in sidebar header
+- **`scripts/push_to_cloud.py`** — reads local SQLite and POSTs to `/api/import` on the cloud server; used to keep cloud Garmin data in sync after a local sync
+- **`GET /api/export` / `POST /api/import`** — full user data dump and bulk upsert (activities, sleep, daily stats, training metrics)
+- **Route maps in activity detail modal** — Leaflet + OpenStreetMap; Strava activities show full polyline with green/red start/finish markers; Garmin activities show start-point marker
+- **`GET /api/activities/{id}/map`** — returns decoded lat/lon coordinate array (route or point) from `raw_json`
+- **`ARCHITECTURE.md`** — system diagram, data flow for Garmin/Strava/chat/plans, key file map, auth model, MCP server tool table
+- **`deploy/setup.sh`** now auto-generates `SECRET_KEY` and writes `COOKIE_SECURE=true`; basic auth (htpasswd) removed since the app has its own login system
+- **Database migration** (`_migrate_to_multiuser`) — detects old single-user schema via `PRAGMA table_info`, recreates date-keyed tables with composite `PRIMARY KEY (user_id, date)`, preserves existing data at `user_id=0`
+
+### Changed
+- `deploy/nginx.conf` — removed `auth_basic` block
+- `backend/requirements.txt` — added `bcrypt>=4.0.1`, `python-jose[cryptography]`, `cryptography`; removed `passlib` (incompatible with chromadb's bcrypt>=4.0.1 requirement)
+- README updated with local-vs-cloud workflow, MCP server setup table, and link to ARCHITECTURE.md
+
+### Fixed
+- `vector_store.py` — removed runtime `X | None` type annotation that caused `TypeError` on Python 3.11 with chromadb's version of `PersistentClient`
+- `deploy/setup.sh` `chmod 600 .env` now runs as `sudo` to avoid permission denied when the file is owned by the app user
+
 ## [0.4.0] — 2026-04-23
 
 ### Added
