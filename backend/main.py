@@ -698,6 +698,23 @@ async def delete_plan_from_garmin(plan_id: int, user_id: int = Depends(auth.get_
         raise HTTPException(400, str(e))
 
 
+# ---------------------------------------------------------------------------
+# Data export / import (push local Garmin data to cloud)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/export")
+async def export_data(user_id: int = Depends(auth.get_current_user)):
+    return await database.export_user_data(user_id)
+
+
+@app.post("/api/import")
+async def import_data(payload: dict, user_id: int = Depends(auth.get_current_user)):
+    counts = await database.import_user_data(payload, user_id)
+    indexed = await vector_store.index_all_activities()
+    log.info("Data import: user_id=%d counts=%s indexed=%d", user_id, counts, indexed)
+    return {**counts, "indexed_in_vector_store": indexed}
+
+
 # Serve frontend static files last (catch-all)
 app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
 

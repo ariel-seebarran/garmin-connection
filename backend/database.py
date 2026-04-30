@@ -877,6 +877,92 @@ async def get_garmin_workout_ids(plan_id: int, user_id: int = 0) -> list[int]:
 
 
 # ---------------------------------------------------------------------------
+# Export / Import (for pushing local Garmin data to cloud server)
+# ---------------------------------------------------------------------------
+
+async def export_user_data(user_id: int = 0) -> dict:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM activities WHERE user_id = ?", (user_id,))
+        activities = [dict(r) for r in await cur.fetchall()]
+        cur = await db.execute("SELECT * FROM sleep_data WHERE user_id = ?", (user_id,))
+        sleep = [dict(r) for r in await cur.fetchall()]
+        cur = await db.execute("SELECT * FROM daily_stats WHERE user_id = ?", (user_id,))
+        daily_stats = [dict(r) for r in await cur.fetchall()]
+        cur = await db.execute("SELECT * FROM training_metrics WHERE user_id = ?", (user_id,))
+        training_metrics = [dict(r) for r in await cur.fetchall()]
+    return {"activities": activities, "sleep": sleep,
+            "daily_stats": daily_stats, "training_metrics": training_metrics}
+
+
+async def import_user_data(data: dict, user_id: int = 0) -> dict:
+    now = datetime.now(timezone.utc).isoformat()
+    counts = {"activities": 0, "sleep": 0, "daily_stats": 0, "training_metrics": 0}
+    async with aiosqlite.connect(DB_PATH) as db:
+        for act in data.get("activities", []):
+            await db.execute(
+                """INSERT OR REPLACE INTO activities
+                   (id, user_id, activity_type, name, start_time, duration_seconds,
+                    distance_meters, avg_pace_per_km, avg_heart_rate, max_heart_rate,
+                    elevation_gain, calories, aerobic_training_effect, anaerobic_training_effect,
+                    avg_power, avg_vertical_oscillation, avg_ground_contact_time,
+                    avg_stride_length, training_stress_score, raw_json, synced_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (act["id"], user_id, act.get("activity_type"), act.get("name"),
+                 act.get("start_time"), act.get("duration_seconds"), act.get("distance_meters"),
+                 act.get("avg_pace_per_km"), act.get("avg_heart_rate"), act.get("max_heart_rate"),
+                 act.get("elevation_gain"), act.get("calories"), act.get("aerobic_training_effect"),
+                 act.get("anaerobic_training_effect"), act.get("avg_power"),
+                 act.get("avg_vertical_oscillation"), act.get("avg_ground_contact_time"),
+                 act.get("avg_stride_length"), act.get("training_stress_score"),
+                 act.get("raw_json"), now),
+            )
+            counts["activities"] += 1
+        for row in data.get("sleep", []):
+            await db.execute(
+                """INSERT OR REPLACE INTO sleep_data
+                   (user_id, date, sleep_score, total_sleep_seconds, deep_sleep_seconds,
+                    light_sleep_seconds, rem_sleep_seconds, awake_seconds, avg_hrv, raw_json, synced_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (user_id, row["date"], row.get("sleep_score"), row.get("total_sleep_seconds"),
+                 row.get("deep_sleep_seconds"), row.get("light_sleep_seconds"),
+                 row.get("rem_sleep_seconds"), row.get("awake_seconds"),
+                 row.get("avg_hrv"), row.get("raw_json"), now),
+            )
+            counts["sleep"] += 1
+        for row in data.get("daily_stats", []):
+            await db.execute(
+                """INSERT OR REPLACE INTO daily_stats
+                   (user_id, date, steps, resting_heart_rate, avg_stress_level,
+                    body_battery_low, body_battery_high, active_calories, total_calories,
+                    floors_climbed, intensity_minutes_moderate, intensity_minutes_vigorous,
+                    avg_spo2, avg_respiration_rate, raw_json, synced_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (user_id, row["date"], row.get("steps"), row.get("resting_heart_rate"),
+                 row.get("avg_stress_level"), row.get("body_battery_low"),
+                 row.get("body_battery_high"), row.get("active_calories"),
+                 row.get("total_calories"), row.get("floors_climbed"),
+                 row.get("intensity_minutes_moderate"), row.get("intensity_minutes_vigorous"),
+                 row.get("avg_spo2"), row.get("avg_respiration_rate"), row.get("raw_json"), now),
+            )
+            counts["daily_stats"] += 1
+        for row in data.get("training_metrics", []):
+            await db.execute(
+                """INSERT OR REPLACE INTO training_metrics
+                   (user_id, date, vo2_max, training_readiness_score, training_readiness_level,
+                    race_5k_seconds, race_10k_seconds, race_half_seconds, race_marathon_seconds, synced_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (user_id, row["date"], row.get("vo2_max"), row.get("training_readiness_score"),
+                 row.get("training_readiness_level"), row.get("race_5k_seconds"),
+                 row.get("race_10k_seconds"), row.get("race_half_seconds"),
+                 row.get("race_marathon_seconds"), now),
+            )
+            counts["training_metrics"] += 1
+        await db.commit()
+    return counts
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
