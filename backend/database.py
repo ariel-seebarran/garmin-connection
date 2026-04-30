@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS activities (
     avg_stride_length REAL,
     training_stress_score REAL,
     raw_json TEXT,
+    polyline TEXT,
     synced_at TEXT
 );
 
@@ -217,11 +218,13 @@ async def _migrate_to_multiuser(db):
             FROM _strava_tokens_bak WHERE id = 1""")
         await db.execute("DROP TABLE _strava_tokens_bak")
 
-    # --- activities: add user_id column ---
+    # --- activities: add user_id and polyline columns ---
     cursor = await db.execute("PRAGMA table_info(activities)")
     cols = {row[1] for row in await cursor.fetchall()}
     if "user_id" not in cols:
         await db.execute("ALTER TABLE activities ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0")
+    if "polyline" not in cols:
+        await db.execute("ALTER TABLE activities ADD COLUMN polyline TEXT")
 
     # --- training_plans: add user_id and garmin_workout_ids ---
     cursor = await db.execute("PRAGMA table_info(training_plans)")
@@ -376,7 +379,7 @@ async def get_activity_detail(activity_id: str, user_id: int = 0) -> dict | None
                       avg_pace_per_km, avg_heart_rate, max_heart_rate, elevation_gain,
                       calories, aerobic_training_effect, anaerobic_training_effect,
                       avg_power, avg_vertical_oscillation, avg_ground_contact_time,
-                      avg_stride_length, training_stress_score, raw_json
+                      avg_stride_length, training_stress_score, raw_json, polyline
                FROM activities WHERE id = ? AND user_id = ?""",
             (activity_id, user_id)
         )
@@ -389,6 +392,15 @@ async def get_activity_detail(activity_id: str, user_id: int = 0) -> dict | None
         except Exception:
             result['raw_data'] = {}
         return result
+
+
+async def update_activity_polyline(activity_id: str, polyline_json: str) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE activities SET polyline = ? WHERE id = ?",
+            (polyline_json, activity_id),
+        )
+        await db.commit()
 
 
 async def get_recent_activities(limit: int = 30, user_id: int = 0) -> list[dict]:

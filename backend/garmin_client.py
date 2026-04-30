@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import re
 from datetime import date, timedelta
@@ -139,6 +140,7 @@ async def _sync_activities(client: Garmin, loop, days: int, results: dict, user_
         for activity in runs:
             await database.upsert_activity(activity, user_id)
             results["activities"] += 1
+            await _fetch_and_store_polyline(client, loop, str(activity.get("activityId", "")), user_id)
     except Exception as e:
         results["errors"].append(f"Activities sync failed: {e}")
 
@@ -586,6 +588,23 @@ async def delete_plan_from_garmin(workout_ids: list[int], email: str = "",
 
     log.info("Deleted %d/%d Garmin workouts, %d errors", deleted, len(workout_ids), len(errors))
     return {"deleted": deleted, "errors": errors}
+
+
+async def _fetch_and_store_polyline(client: Garmin, loop, activity_id: str, user_id: int = 0):
+    if not activity_id:
+        return
+    try:
+        details = await loop.run_in_executor(
+            None, partial(client.get_activity_details, int(activity_id), maxpoly=300)
+        )
+        points = (details or {}).get("geoPolylineDTO", {}).get("polyline", [])
+        if points and len(points) > 1:
+            coords = [[p["lat"], p["lon"]] for p in points if "lat" in p and "lon" in p]
+            if len(coords) > 1:
+                await database.update_activity_polyline(activity_id, json.dumps(coords))
+                log.debug("Stored polyline for activity %s (%d points)", activity_id, len(coords))
+    except Exception as e:
+        log.debug("Could not fetch polyline for activity %s: %s", activity_id, e)
 
 
 async def _sync_vo2_and_races(client: Garmin, loop, date_str: str, results: dict, user_id: int = 0):

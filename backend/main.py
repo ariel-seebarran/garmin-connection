@@ -728,13 +728,26 @@ async def activity_map(activity_id: str, user_id: int = Depends(auth.get_current
     activity = await database.get_activity_detail(activity_id, user_id)
     if not activity:
         raise HTTPException(404, "Activity not found")
+
+    # Stored polyline (Garmin GPS fetched during sync)
+    if activity.get("polyline"):
+        try:
+            import json as _json
+            coords = _json.loads(activity["polyline"])
+            if coords and len(coords) > 1:
+                return {"type": "route", "coords": coords}
+        except Exception:
+            pass
+
     raw = activity.get("raw_data", {})
 
+    # Strava: decode summary_polyline
     if activity_id.startswith("strava_"):
         polyline = (raw.get("map") or {}).get("summary_polyline")
         if polyline:
             return {"type": "route", "coords": _decode_polyline(polyline)}
 
+    # Fallback: start point only
     lat = raw.get("startLatitude") or raw.get("start_latitude")
     lon = raw.get("startLongitude") or raw.get("start_longitude")
     if lat and lon:
