@@ -1,15 +1,19 @@
-# Garmin AI Running Coach
+# Coach Claude — AI Running Coach
 
-AI-powered running coach that uses your complete Garmin history (3+ years) to answer questions, analyze performance, and build personalized training plans.
+AI-powered running coach that uses your complete training history to answer questions, analyze performance, and build personalised training plans.
 
 ## Stack
 - **Backend**: FastAPI + LangGraph ReAct agent + ChromaDB RAG
-- **LLM**: Claude (Sonnet 4.6) with streaming
-- **Data**: Garmin Connect → SQLite (raw) + ChromaDB (vector search)
-- **MCP Server**: Query your running data from Claude Code directly
+- **LLM**: Google Gemini (via `GOOGLE_API_KEY`)
+- **Data**: Garmin Connect or Strava → SQLite + ChromaDB (vector search)
 - **Frontend**: Vanilla JS + dark UI, no build step
+- **Auth**: Per-user accounts with JWT cookies
 
-## Setup
+---
+
+## Running locally (recommended for Garmin users)
+
+Garmin sync works from a home/residential IP but is blocked from cloud servers. Run locally to get full Garmin data including sleep, HRV, training readiness, and race predictions.
 
 ```bash
 # 1. Create and activate venv
@@ -19,57 +23,68 @@ source .venv/bin/activate       # Mac/Linux
 
 # 2. Install dependencies
 pip install -r backend/requirements.txt
-pip install -r mcp_server/requirements.txt
 
-# 3. Configure credentials
+# 3. Configure
 cp .env.example .env
-# Edit .env with your Garmin email/password and Anthropic API key
+# Edit .env — set GOOGLE_API_KEY at minimum
 
 # 4. Run
 python backend/main.py
-# Open http://localhost:8000
+# Opens http://localhost:8000
 ```
 
-## First use
+**First run:**
+1. Register an account at `http://localhost:8000`
+2. Click **Sync Garmin**, enter your Garmin credentials, check **Sync full history**
+3. Wait ~2–5 min for sync + indexing
+4. Ask anything
 
-1. Open `http://localhost:8000`
-2. Click **Sync Garmin** → check **Sync full history** for the first run
-3. Wait for sync + indexing (~2-5 min for 3+ years)
-4. Ask anything!
+**Push local Garmin data to your cloud server** (optional — keeps cloud in sync):
 
-## MCP Server (use from Claude Code)
-
-Add to your Claude Code MCP config (`~/.claude/mcp_servers.json`):
-
-```json
-{
-  "garmin-coach": {
-    "command": "C:/Users/ariel/Dev/garmin-connection/.venv/Scripts/python.exe",
-    "args": ["C:/Users/ariel/Dev/garmin-connection/mcp_server/server.py"]
-  }
-}
+```bash
+python scripts/push_to_cloud.py
+# Enter your cloud username/password when prompted
 ```
 
-Then in Claude Code: *"What was my best training month last year?"*
+Run this any time after a local Garmin sync to upload your data to the cloud server. Your friends can then ask the coach questions about your data too.
 
-## Agent tools
+---
 
-| Tool | Description |
-|------|-------------|
-| `search_training_history` | Semantic search across full 3+ year history |
-| `get_recent_training` | Structured data for last N days |
-| `get_personal_records` | Best paces by distance |
-| `compare_training_periods` | Year-over-year or any two date ranges |
-| `get_recovery_status` | HRV + sleep + RHR synthesis |
-| `get_weekly_volume_trend` | Week-by-week mileage with trend analysis |
+## Cloud deployment (for sharing with friends)
+
+Friends connect their own Strava accounts on the cloud server. Garmin sync is blocked by Garmin from cloud IPs — use the push script above to upload your own Garmin data.
+
+See [`deploy/setup.sh`](deploy/setup.sh) for the full Oracle Cloud Free Tier setup script (Ubuntu 22.04).
+
+**Quick deploy:**
+```bash
+# On your server (Ubuntu 22.04)
+curl -o setup.sh https://raw.githubusercontent.com/ariel-seebarran/garmin-connection/main/deploy/setup.sh
+chmod +x setup.sh
+bash setup.sh
+```
+
+The script installs everything, sets up nginx + HTTPS (Let's Encrypt), and starts the app as a systemd service.
+
+**Deploying updates:**
+```bash
+sudo -u coachclaude git -C /opt/coach-claude/app pull && sudo systemctl restart coach-claude
+```
+
+---
 
 ## API endpoints
 
 | Endpoint | Description |
 |----------|-------------|
-| `POST /api/sync` | Sync Garmin data (pass `full_history: true` for all-time) |
-| `POST /api/chat` | Streaming SSE chat with the LangGraph agent |
+| `POST /api/auth/register` | Create account |
+| `POST /api/auth/login` | Log in (sets httpOnly cookie) |
+| `POST /api/sync` | Sync Garmin data |
+| `GET /api/strava/auth` | Start Strava OAuth flow |
+| `POST /api/strava/sync` | Sync Strava activities |
+| `POST /api/chat` | Streaming SSE chat with the agent |
 | `GET /api/stats` | Dashboard stats summary |
 | `GET /api/activities` | Recent activity list |
-| `GET /api/search?q=...` | Semantic search (direct vector DB query) |
-| `POST /api/index` | Re-index ChromaDB without re-syncing |
+| `GET /api/export` | Export all your data as JSON |
+| `POST /api/import` | Import data (used by push script) |
+| `GET /api/search?q=...` | Semantic search |
